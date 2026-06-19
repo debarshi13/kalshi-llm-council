@@ -79,9 +79,16 @@ class ModelClient:
     def complete(self, spec: ModelSpec, messages: list[dict]) -> tuple[str, Usage]:
         """Run one completion. Returns (text, usage-for-this-call).
 
-        Raises BudgetExceeded *before* the call if the cap is already hit.
+        Raises BudgetExceeded *before* the call if the cap is already hit, then
+        accumulates this call's usage into the running total. The actual API
+        call lives in :meth:`_invoke` so tests can override just that.
         """
         self._check_budget()
+        text, usage = self._invoke(spec, messages)
+        self.total = self.total + usage
+        return text, usage
+
+    def _invoke(self, spec: ModelSpec, messages: list[dict]) -> tuple[str, Usage]:
         try:
             import litellm  # lazy: only needed for live runs
         except ImportError as exc:  # pragma: no cover - exercised only without [real]
@@ -96,9 +103,7 @@ class ModelClient:
             temperature=spec.temperature,
         )
         text = resp["choices"][0]["message"]["content"] or ""
-        usage = self._extract_usage(resp)
-        self.total = self.total + usage
-        return text, usage
+        return text, self._extract_usage(resp)
 
     @staticmethod
     def _extract_usage(resp) -> Usage:

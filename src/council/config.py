@@ -52,8 +52,8 @@ class Settings(BaseModel):
                 "implementer and reviewer must use different models "
                 "(diverse review is the whole point of a council)"
             )
-        if self.engine not in {"crewai", "mock"}:
-            raise ValueError(f"engine must be 'crewai' or 'mock', got {self.engine!r}")
+        if self.engine not in {"litellm", "crewai", "mock"}:
+            raise ValueError(f"engine must be 'litellm', 'crewai', or 'mock', got {self.engine!r}")
         return self
 
     def spec(self, role: Role) -> ModelSpec:

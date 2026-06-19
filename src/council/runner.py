@@ -14,6 +14,10 @@ def build_engine(name: str) -> Council:
         from .mock_council import MockCouncil
 
         return MockCouncil()
+    if name == "litellm":
+        from .litellm_council import LiteLLMCouncil
+
+        return LiteLLMCouncil()
     if name == "crewai":
         from .crew_council import CrewAICouncil
 

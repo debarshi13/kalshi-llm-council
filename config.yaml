@@ -6,7 +6,8 @@
 # "anthropic/claude-...", "moonshot/kimi-...") or to a self-hosted endpoint
 # (e.g. "openai/glm-5.2" with api_base) without touching any orchestration code.
 
-engine: crewai          # crewai | mock  (mock runs offline with no API keys)
+engine: litellm         # litellm | mock | crewai  (litellm = live via LiteLLM; mock runs offline, no keys)
+                        # NOTE: crewai cannot install on Python 3.14 — litellm is the live engine here.
 
 roles:
   architect:
