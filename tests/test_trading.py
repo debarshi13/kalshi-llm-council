@@ -87,3 +87,46 @@ def test_risk_kill_switch_and_cash():
     caps.kill_switch = False
     # within position cap (5% of 1000 = 50) but exceeds the $20 cash on hand
     assert caps.check(led, 30.0, 0.0).allowed is False
+
+
+# --- book loop -------------------------------------------------------------
+def _book(beliefs=None, bankroll=1000.0, kill=False):
+    from council.trading.book import Book, MockAnalyst
+    return Book(
+        name="A",
+        analyst=MockAnalyst(beliefs),
+        ledger=PaperLedger(bankroll, book="A"),
+        risk=RiskCaps(bankroll=bankroll, max_position_frac=0.05, kill_switch=kill),
+    )
+
+
+def test_book_no_edge_no_trades():
+    md = MockMarketData()
+    book = _book()  # default analyst = market price → zero edge
+    assert book.run_tick(md, ["FED-DEC-CUT", "CPI-NOV-HOT"]) == []
+
+
+def test_book_opens_yes_on_positive_edge_and_profits():
+    md = MockMarketData()
+    book = _book(beliefs={"FED-DEC-CUT": 0.85})  # market 0.62 → +0.23 edge
+    opened = book.run_tick(md, ["FED-DEC-CUT"])
+    assert len(opened) == 1 and opened[0].side == "yes"
+
+    md.resolve("FED-DEC-CUT", 1)
+    book.ledger.resolve_trade(opened[0], 1)
+    s = book.ledger.score()
+    assert s["realized_pnl"] > 0
+    assert s["beats_market"] is True  # 0.85 calibrated closer to YES than 0.62
+
+
+def test_book_opens_no_on_negative_edge():
+    md = MockMarketData()
+    book = _book(beliefs={"CPI-NOV-HOT": 0.20})  # market 0.41 → -0.21 edge → NO
+    opened = book.run_tick(md, ["CPI-NOV-HOT"])
+    assert len(opened) == 1 and opened[0].side == "no"
+
+
+def test_book_kill_switch_blocks_all():
+    md = MockMarketData()
+    book = _book(beliefs={"FED-DEC-CUT": 0.85}, kill=True)
+    assert book.run_tick(md, ["FED-DEC-CUT"]) == []
