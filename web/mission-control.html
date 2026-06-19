@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Council · Kalshi Mission Control</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0a0e14; --panel:#121822; --panel2:#161d28; --line:#232c3a; --line2:#2e3a4d;
+    --ink:#e8edf4; --muted:#8593a8; --faint:#5b6678;
+    --accent:#4dd0ff;
+    --up:#3ddc84; --down:#ff5d5d; --pending:#ffb74d;
+    --A:#4dd0ff; --B:#b794ff; --C:#f5c451;
+    --mono:"IBM Plex Mono",ui-monospace,monospace;
+    --disp:"Space Grotesk",ui-sans-serif,system-ui,sans-serif;
+    --r:12px;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:14px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+    display:flex;flex-direction:column}
+  .num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  button{font:inherit;cursor:pointer}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+
+  /* ── Top bar ─────────────────────────────────────── */
+  header{display:flex;align-items:center;gap:20px;padding:12px 20px;
+    background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .brand{font-family:var(--disp);font-weight:600;font-size:16px;letter-spacing:.2px;display:flex;align-items:center;gap:9px}
+  .brand svg{color:var(--accent)}
+  .brand small{color:var(--muted);font-weight:400}
+  .mode{font-family:var(--mono);font-size:12px;font-weight:600;letter-spacing:.08em;
+    padding:3px 10px;border-radius:999px;border:1px solid var(--pending);color:var(--pending);background:rgba(255,183,77,.08)}
+  .mode[data-live="true"]{border-color:var(--down);color:var(--down);background:rgba(255,93,93,.1)}
+  .hud{display:flex;gap:22px;margin-left:auto;align-items:center}
+  .stat{display:flex;flex-direction:column;line-height:1.25}
+  .stat .k{font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--faint)}
+  .stat .v{font-family:var(--mono);font-size:16px;font-weight:600}
+  .v.up{color:var(--up)} .v.down{color:var(--down)}
+  .kill{display:flex;align-items:center;gap:7px;background:transparent;color:var(--down);
+    border:1px solid var(--down);border-radius:8px;padding:7px 12px;font-weight:600;font-size:13px;
+    transition:background .18s,color .18s}
+  .kill:hover{background:var(--down);color:#1a0606}
+  .kill[aria-pressed="true"]{background:var(--down);color:#1a0606}
+
+  /* ── Layout ──────────────────────────────────────── */
+  main{flex:1;display:grid;grid-template-columns:248px 1fr 340px;gap:14px;padding:14px;min-height:0}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);display:flex;flex-direction:column;min-height:0;overflow:hidden}
+  .panel > h2{margin:0;padding:11px 15px;font-family:var(--disp);font-size:12px;font-weight:600;
+    text-transform:uppercase;letter-spacing:.07em;color:var(--muted);border-bottom:1px solid var(--line);
+    display:flex;align-items:center;justify-content:space-between}
+  .panel .scroll{overflow:auto;padding:8px}
+
+  /* ── Watchlist ───────────────────────────────────── */
+  .mkt{display:block;width:100%;text-align:left;background:var(--panel2);border:1px solid var(--line);
+    border-radius:9px;padding:9px 11px;margin-bottom:7px;transition:border-color .18s,background .18s}
+  .mkt:hover{border-color:var(--line2);background:#1a2230}
+  .mkt .tk{font-family:var(--mono);font-size:11px;color:var(--faint);letter-spacing:.03em}
+  .mkt .ti{font-size:12.5px;margin:2px 0 7px;color:var(--ink);line-height:1.35}
+  .mkt .row{display:flex;align-items:center;justify-content:space-between}
+  .price{font-family:var(--mono);font-size:14px;font-weight:600}
+  .edge{font-family:var(--mono);font-size:11px;padding:1px 7px;border-radius:999px}
+  .edge.pos{color:var(--up);background:rgba(61,220,132,.1)}
+  .edge.neg{color:var(--down);background:rgba(255,93,93,.1)}
+  .edge.flat{color:var(--faint);background:rgba(91,102,120,.12)}
+
+  /* ── Books ───────────────────────────────────────── */
+  .books{display:grid;grid-template-rows:repeat(3,1fr);gap:14px}
+  .book{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);
+    display:grid;grid-template-columns:1fr 1.1fr;overflow:hidden}
+  .book .left{padding:14px 16px;border-right:1px solid var(--line)}
+  .book .bk-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+  .badge{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;
+    font-family:var(--disp);font-weight:700;font-size:14px;color:#0a0e14}
+  .book[data-book="A"] .badge{background:var(--A)} .book[data-book="A"] .accent{color:var(--A)}
+  .book[data-book="B"] .badge{background:var(--B)} .book[data-book="B"] .accent{color:var(--B)}
+  .book[data-book="C"] .badge{background:var(--C)} .book[data-book="C"] .accent{color:var(--C)}
+  .bk-head .name{font-family:var(--disp);font-weight:600;font-size:14px}
+  .bk-head .strat{font-size:11px;color:var(--muted)}
+  .pnl{font-family:var(--mono);font-size:26px;font-weight:600;line-height:1}
+  .pnl.up{color:var(--up)} .pnl.down{color:var(--down)}
+  .pnl-sub{font-size:11px;color:var(--faint);margin-top:3px}
+  .metrics{display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;padding:14px 16px;align-content:start}
+  .metric .k{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--faint)}
+  .metric .v{font-family:var(--mono);font-size:15px;font-weight:600;margin-top:1px}
+  .calib{grid-column:1/-1;display:flex;align-items:center;gap:8px;margin-top:2px;
+    padding-top:9px;border-top:1px solid var(--line)}
+  .chip{font-family:var(--mono);font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:999px}
+  .chip.beat{color:var(--up);background:rgba(61,220,132,.12)}
+  .chip.miss{color:var(--down);background:rgba(255,93,93,.12)}
+
+  /* ── Right column ────────────────────────────────── */
+  .right{display:grid;grid-template-rows:auto 1fr;gap:14px;min-height:0}
+  .appr{background:var(--panel2);border:1px solid rgba(255,183,77,.4);border-radius:10px;padding:12px;margin-bottom:9px}
+  .appr .top{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+  .appr .tk{font-family:var(--mono);font-size:11px;color:var(--muted)}
+  .appr .side{font-family:var(--mono);font-weight:600;font-size:12px;padding:1px 7px;border-radius:5px}
+  .side.yes{color:var(--up);background:rgba(61,220,132,.12)}
+  .side.no{color:var(--down);background:rgba(255,93,93,.12)}
+  .appr .ti{font-size:12.5px;margin:6px 0}
+  .appr .why{font-size:11.5px;color:var(--muted);line-height:1.45;margin:6px 0 10px}
+  .appr .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:11px}
+  .appr .grid div{font-family:var(--mono);font-size:11px}
+  .appr .grid .lbl{color:var(--faint);font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;display:block}
+  .appr .acts{display:flex;gap:8px}
+  .appr .acts button{flex:1;border:none;border-radius:7px;padding:8px;font-weight:600;font-size:12.5px;
+    display:flex;align-items:center;justify-content:center;gap:6px;transition:filter .15s}
+  .ok{background:var(--up);color:#052b13} .ok:hover{filter:brightness(1.1)}
+  .deny{background:var(--panel);color:var(--down);border:1px solid var(--down)!important}
+  .deny:hover{background:var(--down);color:#1a0606}
+  .empty{color:var(--faint);font-size:12.5px;text-align:center;padding:24px 12px}
+
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th{font-size:9.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--faint);
+    text-align:right;padding:7px 10px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel)}
+  th:first-child,td:first-child{text-align:left}
+  td{padding:8px 10px;border-bottom:1px solid var(--line);font-family:var(--mono)}
+  tr:last-child td{border-bottom:none}
+  td .bkdot{display:inline-block;width:7px;height:7px;border-radius:2px;margin-right:6px;vertical-align:middle}
+
+  @media (max-width:1100px){
+    main{grid-template-columns:1fr;grid-auto-rows:min-content}
+    .books{grid-template-rows:none}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <span class="brand">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="m7 14 4-4 3 3 5-6"/></svg>
+    Council <small>· Kalshi Mission Control</small>
+  </span>
+  <span class="mode" id="mode" data-live="false">PAPER</span>
+
+  <div class="hud">
+    <div class="stat"><span class="k">Bankroll</span><span class="v num">$3,000</span></div>
+    <div class="stat"><span class="k">Total P&amp;L</span><span class="v num up" id="total-pnl">+$184.20</span></div>
+    <div class="stat"><span class="k">Today</span><span class="v num down" id="today-pnl">−$22.10</span></div>
+    <div class="stat"><span class="k">Open</span><span class="v num">7</span></div>
+    <button class="kill" id="kill" aria-pressed="false" aria-label="Engage kill switch — halt all trading">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.77.04"/></svg>
+      Kill switch
+    </button>
+  </div>
+</header>
+
+<main>
+  <!-- Watchlist -->
+  <section class="panel" aria-label="Market watchlist">
+    <h2>Watchlist <span class="num" style="color:var(--faint)">12</span></h2>
+    <div class="scroll" id="watchlist"></div>
+  </section>
+
+  <!-- Books -->
+  <section class="books" aria-label="Strategy books">
+    <article class="book" data-book="A">
+      <div class="left">
+        <div class="bk-head"><span class="badge">A</span><div><div class="name">News-driven</div><div class="strat">web search · event reaction</div></div></div>
+        <div class="pnl up num">+$96.40</div>
+        <div class="pnl-sub">$1,000 bankroll · since Jun 5</div>
+      </div>
+      <div class="metrics">
+        <div class="metric"><span class="k">Hit rate</span><div class="v">58%</div></div>
+        <div class="metric"><span class="k">Trades</span><div class="v">31</div></div>
+        <div class="metric"><span class="k">Open pos</span><div class="v">3</div></div>
+        <div class="metric"><span class="k">Fee drag</span><div class="v">$11.20</div></div>
+        <div class="calib">
+          <span class="metric" style="flex:1"><span class="k">Brier (you / mkt)</span><div class="v">0.19 / 0.23</div></span>
+          <span class="chip beat">BEATS MKT</span>
+        </div>
+      </div>
+    </article>
+
+    <article class="book" data-book="B">
+      <div class="left">
+        <div class="bk-head"><span class="badge">B</span><div><div class="name">Cross-source</div><div class="strat">polls · econ · futures divergence</div></div></div>
+        <div class="pnl up num">+$142.90</div>
+        <div class="pnl-sub">$1,000 bankroll · since Jun 5</div>
+      </div>
+      <div class="metrics">
+        <div class="metric"><span class="k">Hit rate</span><div class="v">63%</div></div>
+        <div class="metric"><span class="k">Trades</span><div class="v">24</div></div>
+        <div class="metric"><span class="k">Open pos</span><div class="v">2</div></div>
+        <div class="metric"><span class="k">Fee drag</span><div class="v">$8.05</div></div>
+        <div class="calib">
+          <span class="metric" style="flex:1"><span class="k">Brier (you / mkt)</span><div class="v">0.16 / 0.22</div></span>
+          <span class="chip beat">BEATS MKT</span>
+        </div>
+      </div>
+    </article>
+
+    <article class="book" data-book="C">
+      <div class="left">
+        <div class="bk-head"><span class="badge">C</span><div><div class="name">Calibrated reasoning</div><div class="strat">thin / illiquid markets</div></div></div>
+        <div class="pnl down num">−$55.10</div>
+        <div class="pnl-sub">$1,000 bankroll · since Jun 5</div>
+      </div>
+      <div class="metrics">
+        <div class="metric"><span class="k">Hit rate</span><div class="v">44%</div></div>
+        <div class="metric"><span class="k">Trades</span><div class="v">18</div></div>
+        <div class="metric"><span class="k">Open pos</span><div class="v">2</div></div>
+        <div class="metric"><span class="k">Fee drag</span><div class="v">$14.60</div></div>
+        <div class="calib">
+          <span class="metric" style="flex:1"><span class="k">Brier (you / mkt)</span><div class="v">0.27 / 0.25</div></span>
+          <span class="chip miss">TRAILS MKT</span>
+        </div>
+      </div>
+    </article>
+  </section>
+
+  <!-- Approvals + positions -->
+  <div class="right">
+    <section class="panel" aria-label="Approval queue" style="max-height:50vh">
+      <h2>Approval queue <span class="num" id="appr-count" style="color:var(--pending)">2</span></h2>
+      <div class="scroll" id="approvals"></div>
+    </section>
+
+    <section class="panel" aria-label="Open positions">
+      <h2>Open positions</h2>
+      <div class="scroll" style="padding:0">
+        <table>
+          <thead><tr><th>Market</th><th>Side</th><th>Qty</th><th>Entry</th><th>P&amp;L</th></tr></thead>
+          <tbody id="positions"></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+</main>
+
+<script>
+"use strict";
+const $=s=>document.querySelector(s);
+const fmt=n=>(n<0?"−$":"+$")+Math.abs(n).toFixed(2);
+
+const demo={
+  watchlist:[
+    {tk:"FED-DEC-CUT",ti:"Fed cuts rates in December?",price:.62,edge:+.23},
+    {tk:"CPI-NOV-HOT",ti:"November CPI above 3.2%?",price:.41,edge:-.21},
+    {tk:"GOVT-SHUTDOWN",ti:"US govt shutdown before year end?",price:.18,edge:+.02},
+    {tk:"GDP-Q4-2PCT",ti:"Q4 GDP above 2.0%?",price:.55,edge:+.09},
+    {tk:"JOBS-DEC-BEAT",ti:"December nonfarm payrolls beat consensus?",price:.48,edge:-.04},
+  ],
+  approvals:[
+    {id:"ap1",book:"B",bookName:"Cross-source",tk:"FED-DEC-CUT",ti:"Fed cuts rates in December?",
+     side:"yes",contracts:80,price:.62,pred:.85,edge:+.23,fee:1.32,
+     why:"Fed funds futures imply 84% vs the market's 62%. Three sources agree the market is underpricing a cut."},
+    {id:"ap2",book:"A",bookName:"News-driven",tk:"CPI-NOV-HOT",ti:"November CPI above 3.2%?",
+     side:"no",contracts:84,price:.59,pred:.22,edge:-.21,fee:1.21,
+     why:"Cooling shelter + energy prints since the market last repriced. Fresh data favors a soft CPI."},
+  ],
+  positions:[
+    {bk:"A",tk:"FED-DEC-CUT",side:"yes",qty:60,entry:.58,pnl:+4.10},
+    {bk:"B",tk:"GDP-Q4-2PCT",side:"yes",qty:70,entry:.51,pnl:+8.40},
+    {bk:"B",tk:"SENATE-BILL",side:"no",qty:40,entry:.33,pnl:-2.20},
+    {bk:"C",tk:"OSCARS-FILM-X",side:"yes",qty:25,entry:.44,pnl:-6.90},
+    {bk:"A",tk:"OPEC-CUT-JAN",side:"yes",qty:50,entry:.61,pnl:+1.30},
+  ],
+};
+const BK={A:"var(--A)",B:"var(--B)",C:"var(--C)"};
+
+function edgeChip(e){
+  const cls=e>=.05?"pos":e<=-.05?"neg":"flat";
+  const txt=(e>0?"+":"")+(e*100).toFixed(0)+"¢ edge";
+  return `<span class="edge ${cls}">${cls==="flat"?"no edge":txt}</span>`;
+}
+function renderWatchlist(){
+  $("#watchlist").innerHTML=demo.watchlist.map(m=>`
+    <button class="mkt">
+      <div class="tk">${m.tk}</div>
+      <div class="ti">${m.ti}</div>
+      <div class="row"><span class="price">${(m.price*100).toFixed(0)}¢</span>${edgeChip(m.edge)}</div>
+    </button>`).join("");
+}
+function renderApprovals(){
+  const box=$("#approvals");
+  if(!demo.approvals.length){box.innerHTML=`<div class="empty">No trades awaiting approval.<br>The council is watching the book.</div>`;}
+  else box.innerHTML=demo.approvals.map(a=>`
+    <div class="appr" data-id="${a.id}">
+      <div class="top">
+        <span class="tk"><span style="color:${BK[a.book]};font-weight:600">${a.book}</span> · ${a.tk}</span>
+        <span class="side ${a.side}">${a.side.toUpperCase()}</span>
+      </div>
+      <div class="ti">${a.ti}</div>
+      <div class="why">${a.why}</div>
+      <div class="grid">
+        <div><span class="lbl">Size</span>${a.contracts} @ ${(a.price*100).toFixed(0)}¢</div>
+        <div><span class="lbl">Model / mkt</span>${(a.pred*100).toFixed(0)}% / ${(a.price*100).toFixed(0)}%</div>
+        <div><span class="lbl">Est. fee</span>$${a.fee.toFixed(2)}</div>
+      </div>
+      <div class="acts">
+        <button class="ok" data-act="approve" aria-label="Approve ${a.tk}">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> Approve
+        </button>
+        <button class="deny" data-act="deny" aria-label="Deny ${a.tk}">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg> Deny
+        </button>
+      </div>
+    </div>`).join("");
+  $("#appr-count").textContent=demo.approvals.length;
+}
+function renderPositions(){
+  $("#positions").innerHTML=demo.positions.map(p=>`
+    <tr>
+      <td><span class="bkdot" style="background:${BK[p.bk]}"></span>${p.tk}</td>
+      <td style="color:${p.side==="yes"?"var(--up)":"var(--down)"}">${p.side.toUpperCase()}</td>
+      <td style="text-align:right">${p.qty}</td>
+      <td style="text-align:right">${(p.entry*100).toFixed(0)}¢</td>
+      <td style="text-align:right;color:${p.pnl>=0?"var(--up)":"var(--down)"}">${fmt(p.pnl)}</td>
+    </tr>`).join("");
+}
+
+// Approve / deny (client-side demo)
+$("#approvals").addEventListener("click",e=>{
+  const btn=e.target.closest("button[data-act]"); if(!btn)return;
+  const card=btn.closest(".appr"); const id=card.dataset.id;
+  demo.approvals=demo.approvals.filter(a=>a.id!==id);
+  renderApprovals();
+});
+
+// Kill switch
+$("#kill").addEventListener("click",e=>{
+  const b=e.currentTarget, on=b.getAttribute("aria-pressed")!=="true";
+  b.setAttribute("aria-pressed",String(on));
+  $("#mode").textContent=on?"HALTED":"PAPER";
+  $("#mode").style.borderColor=on?"var(--down)":"";
+  $("#mode").style.color=on?"var(--down)":"";
+});
+
+renderWatchlist(); renderApprovals(); renderPositions();
+</script>
+</body>
+</html>
