@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Council · Mission Control</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">⚖︎ <span>Council</span> <small>mission control</small></div>
+    <form id="run-form" class="run-form">
+      <input id="task" type="text" placeholder="Describe a coding task…" autocomplete="off" required />
+      <select id="engine" title="engine">
+        <option value="">config default</option>
+        <option value="mock">mock (offline)</option>
+        <option value="crewai">crewai (live)</option>
+      </select>
+      <button type="submit">Run</button>
+    </form>
+    <div class="hud">
+      <span class="hud-item">round <b id="hud-round">–</b></span>
+      <span class="hud-item">tok <b id="hud-tokens">0</b></span>
+      <span class="hud-item">$ <b id="hud-cost">0.0000</b></span>
+      <span class="hud-item status" id="hud-status">idle</span>
+    </div>
+  </header>
+
+  <main>
+    <aside class="history">
+      <h2>Runs</h2>
+      <ul id="run-list"></ul>
+    </aside>
+
+    <section class="lanes">
+      <div class="lane" data-role="architect"><h3>architect</h3><div class="stream" id="lane-architect"></div></div>
+      <div class="lane" data-role="implementer"><h3>implementer</h3><div class="stream" id="lane-implementer"></div></div>
+      <div class="lane" data-role="reviewer"><h3>reviewer</h3><div class="stream" id="lane-reviewer"></div></div>
+    </section>
+  </main>
+
+  <div id="approval" class="approval hidden">
+    <div class="approval-card">
+      <h3>Approval required</h3>
+      <p id="approval-detail"></p>
+      <div class="approval-actions">
+        <button id="approve-yes" class="ok">Approve</button>
+        <button id="approve-no" class="danger">Deny</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

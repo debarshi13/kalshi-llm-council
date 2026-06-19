@@ -1,0 +1,33 @@
+# Role -> model mapping for the coding council.
+#
+# The implementer and reviewer MUST be different models so review has real
+# diversity (uncorrelated errors). Each `model` is a LiteLLM model id; the
+# default ids below route via OpenRouter. Swap to direct-provider ids (e.g.
+# "anthropic/claude-...", "moonshot/kimi-...") or to a self-hosted endpoint
+# (e.g. "openai/glm-5.2" with api_base) without touching any orchestration code.
+
+engine: crewai          # crewai | mock  (mock runs offline with no API keys)
+
+roles:
+  architect:
+    model: "openrouter/anthropic/claude-opus-4-8"
+    goal: "Decompose the task and produce a clear, minimal implementation spec the implementer can follow."
+    temperature: 0.2
+  implementer:
+    model: "openrouter/moonshotai/kimi-k2"
+    goal: "Write correct, minimal code that satisfies the architect's spec. Smallest change that works."
+    temperature: 0.1
+  reviewer:
+    model: "openrouter/z-ai/glm-5.2"
+    goal: "Find bugs and gaps the implementer missed; run the tests; demand revisions until it passes."
+    temperature: 0.2
+
+pipeline:
+  max_revise_rounds: 2    # architect -> implement -> review -> (revise -> review)*  up to this many revise loops
+  run_tests: true         # reviewer invokes the sandboxed test runner
+
+obsidian:
+  enabled: true
+  vault: "/home/debarshi/The Brain/The Brain"
+  # Each completed run is logged as a source page here.
+  runs_subdir: "wiki/sources"
