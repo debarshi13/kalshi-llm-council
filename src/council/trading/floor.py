@@ -16,10 +16,12 @@ import random
 import time
 
 from ..models import ModelClient, ModelSpec
-from .analysts import LiteLLMAnalyst, MockResearch
+from .analysts import MockResearch
+from .deliberation import DeliberativeCouncil, decide, Decision
 from .execution import KalshiTrader, RiskGuard
 from .ledger import kalshi_fee
 from .market import MockMarketData
+from .research import WebSearchResearch, openrouter_online_search
 
 # (book id, model name, key, mock-skill, OpenRouter slug, strategy prompt)
 BOOKS = [
@@ -55,21 +57,31 @@ class FloorState:
         self._ids = itertools.count(1)
         self._tick_n = 0
         self._rr = 0
-        self._analysts: dict | None = None
         self._live_markets: list = []
+        self.council = None
+        self.research = None
+        self.last_debate = None
+        self.trades_today = 0
+        self.DELIBERATE_EVERY = int(os.environ.get("DELIBERATE_EVERY", 5))
+        self.MAX_TRADES_PER_DAY = int(os.environ.get("MAX_TRADES_PER_DAY", 10))
+        self._council_seen: set[str] = set()
+        self.books["council"] = {"book": "★", "name": "Council", "key": "council",
+                                 "skill": 0.5, "slug": "council", "strat": "consensus",
+                                 "pnl": 0.0, "open": [], "wins": 0, "trades": 0}
 
     # ── control ─────────────────────────────────────────────────────────────
     def enable_live(self, budget: float = 10.0) -> None:
         client = ModelClient(budget_usd=budget)
-        research = MockResearch()  # web-search feed is a later upgrade
-        self._analysts = {
-            k: LiteLLMAnalyst(ModelSpec(bk["slug"], "Estimate a calibrated P(YES)."),
-                              bk["strat"], client, research)
-            for k, bk in self.books.items()
-        }
+        specs = [ModelSpec(bk["slug"], "Estimate a calibrated P(YES).")
+                 for k, bk in self.books.items() if k != "council"]
+        self.council = DeliberativeCouncil(specs, client)
+        if os.environ.get("COUNCIL_RESEARCH", "online").lower() == "online":
+            self.research = WebSearchResearch(openrouter_online_search(client))
+        else:
+            self.research = MockResearch()
         self._live_markets = self._load_live_markets()
         self.live = True
-        self._log(f"LIVE armed — real models active over {len(self._live_markets)} markets. Tokens will be spent.")
+        self._log(f"LIVE armed — council active over {len(self._live_markets)} markets. Tokens will be spent.")
 
     def arm_execution(self, host: str | None = None) -> None:
         """Turn on REAL order placement. Gated behind COUNCIL_MODE=live + Kalshi creds."""
@@ -122,6 +134,30 @@ class FloorState:
                 self._log(f"Kalshi load failed ({type(exc).__name__}); falling back to mock markets")
         return self.markets
 
+    def cheap_score(self, m) -> float:
+        """Rank without an LLM: prefer liquid markets priced away from the extremes."""
+        return m.volume * (1.0 - abs(0.5 - m.yes_price) * 2)
+
+    def _council_eval(self) -> None:
+        if self.trades_today >= self.MAX_TRADES_PER_DAY:
+            return
+        pool = [m for m in self._live_markets if m.id not in self._council_seen] or self._live_markets
+        if not pool:
+            return
+        m = max(pool, key=self.cheap_score)
+        self._council_seen.add(m.id)
+        notes = self.research.context_for(m) if self.research else "No external signal available."
+        d = self.council.debate(m, notes)
+        dec = decide(d, m, self.guard)
+        self.last_debate = (d, dec)
+        self.calls += 1
+        self._log(f"Council debate {m.id}: P(YES) {d.converged_p:.2f} vs {m.yes_price:.2f} "
+                  f"(spread {d.spread:.3f}) — {dec.reason}")
+        if dec.place and self.execute and not self.frozen:
+            entry = dec.limit_price_cents / 100.0
+            self._auto_execute("council", m, dec.side, entry, dec.contracts)
+            self.trades_today += 1
+
     # ── tick ────────────────────────────────────────────────────────────────
     def tick(self) -> None:
         self._tick_n += 1
@@ -130,8 +166,8 @@ class FloorState:
         if not self.auto or self.frozen:
             return
         if self.live:
-            if self._tick_n % self.LIVE_EVERY == 0:
-                self._live_eval()
+            if self._tick_n % self.DELIBERATE_EVERY == 0:
+                self._council_eval()
         else:
             self._mock_gen()
 
@@ -142,27 +178,6 @@ class FloorState:
             m = random.choice(self.markets)
             prob = min(max(m.yes_price + random.gauss(0, 0.14), 0.02), 0.98)
             self._maybe_ticket(key, m, prob, thesis=None)
-
-    def _live_eval(self) -> None:
-        if self.calls >= self.MAX_LIVE_CALLS:
-            self.live = False
-            self._log(f"live call cap ({self.MAX_LIVE_CALLS}) reached — LIVE auto-disabled")
-            return
-        keys = list(self._analysts)
-        key = keys[self._rr % len(keys)]
-        self._rr += 1
-        if sum(1 for t in self.tickets if t["key"] == key) >= self.MAX_PENDING:
-            return
-        m = random.choice(self._live_markets)
-        bk = self.books[key]
-        try:
-            est = self._analysts[key].estimate(m)
-            self.calls += 1
-        except Exception as exc:  # noqa: BLE001
-            self._log(f"{bk['name']} model error: {type(exc).__name__}")
-            return
-        self._log(f"{bk['name']}: {m.id} → P(YES) {est.prob_yes:.2f} vs {m.yes_price:.2f} · {est.thesis[:70]}")
-        self._maybe_ticket(key, m, est.prob_yes, thesis=est.thesis)
 
     def _maybe_ticket(self, key: str, m, prob: float, thesis: str | None) -> None:
         edge = prob - m.yes_price
@@ -217,6 +232,19 @@ class FloorState:
         self.activity.insert(0, {"t": time.strftime("%H:%M:%S"), "s": s})
         del self.activity[40:]
 
+    def _debate_snapshot(self):
+        if not self.last_debate:
+            return None
+        d, dec = self.last_debate
+        return {
+            "market_id": d.market_id,
+            "converged_p": d.converged_p, "spread": d.spread, "notes": d.notes,
+            "round1": [{"model": e.model, "p": e.p_yes, "thesis": e.thesis} for e in d.round1],
+            "round2": [{"model": e.model, "p": e.p_yes, "thesis": e.thesis} for e in d.round2],
+            "decision": {"place": dec.place, "side": dec.side, "contracts": dec.contracts,
+                         "cents": dec.limit_price_cents, "reason": dec.reason},
+        }
+
     def snapshot(self) -> dict:
         return {
             "output": round(self.output, 2),
@@ -225,6 +253,7 @@ class FloorState:
             "live": self.live,
             "execute": self.execute,
             "calls": self.calls,
+            "debate": self._debate_snapshot(),
             "books": [
                 {"book": bk["book"], "name": bk["name"], "key": k, "pnl": round(bk["pnl"], 2),
                  "open": len(bk["open"]), "trades": bk["trades"],

@@ -1,6 +1,7 @@
 import pytest
 
 from council.trading.book import Estimate
+from council.trading.deliberation import Deliberation, ModelEstimate
 from council.trading.execution import KalshiTrader, RiskGuard
 from council.trading.floor import FloorState
 
@@ -49,14 +50,20 @@ class _FakeTrader:
         return {"order": {"status": "resting"}}
 
 
-class _FakeAnalyst:
-    def estimate(self, market):
-        return Estimate(prob_yes=0.95, thesis="high conviction")
+class _FakeCouncil:
+    """Fake council that always returns a high-conviction consensus."""
+    def debate(self, market, notes):
+        e = [ModelEstimate("a", 0.95, "high conviction"), ModelEstimate("b", 0.95, "high conviction")]
+        return Deliberation(market.id, e, e, 0.95, 0.01, notes)
+
+class _FakeResearch:
+    def context_for(self, market): return "notes"
 
 
 def _armed_floor(guard):
     f = FloorState()
-    f._analysts = {k: _FakeAnalyst() for k in f.books}
+    f.council = _FakeCouncil()
+    f.research = _FakeResearch()
     f._live_markets = f.markets
     f.live = True
     f.auto = True
@@ -68,7 +75,7 @@ def _armed_floor(guard):
 
 def test_auto_execute_places_orders_no_approval():
     f = _armed_floor(RiskGuard(max_position_usd=100, max_total_exposure_usd=1000, max_daily_loss_usd=100))
-    for _ in range(f.LIVE_EVERY * 3):
+    for _ in range(f.DELIBERATE_EVERY * 3):
         f.tick()
     assert f.trader.placed, "expected real orders to be placed"
     assert f.snapshot()["execute"] is True
@@ -77,7 +84,7 @@ def test_auto_execute_places_orders_no_approval():
 
 def test_risk_caps_block_every_order():
     f = _armed_floor(RiskGuard(max_position_usd=0.01, max_total_exposure_usd=0.01, max_daily_loss_usd=20))
-    for _ in range(f.LIVE_EVERY * 3):
+    for _ in range(f.DELIBERATE_EVERY * 3):
         f.tick()
     assert f.trader.placed == [], "risk caps should have blocked all orders"
     assert any("RISK BLOCKED" in a["s"] for a in f.activity)
@@ -86,7 +93,7 @@ def test_risk_caps_block_every_order():
 def test_kill_switch_halts_execution():
     f = _armed_floor(RiskGuard(max_position_usd=100, max_total_exposure_usd=1000, max_daily_loss_usd=100))
     f.frozen = True
-    for _ in range(f.LIVE_EVERY * 3):
+    for _ in range(f.DELIBERATE_EVERY * 3):
         f.tick()
     assert f.trader.placed == []                 # frozen = no new orders
 

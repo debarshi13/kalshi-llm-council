@@ -3,6 +3,7 @@ import pytest
 from council.models import ModelClient, ModelSpec, Usage
 from council.trading.analysts import LiteLLMAnalyst, MockResearch, parse_estimate
 from council.trading.desk import build_litellm_desk, build_mock_desk
+from council.trading.execution import RiskGuard
 from council.trading.market import Market, MockMarketData
 
 
@@ -69,25 +70,32 @@ def test_litellm_desk_builds_three_books():
 
 
 def test_floor_live_path_without_spend():
-    """Exercise the FloorState live path with injected fake analysts — no API calls."""
-    from council.trading.book import Estimate
+    """Exercise the FloorState live path with injected fake council — no API calls."""
+    from council.trading.deliberation import Deliberation, ModelEstimate
     from council.trading.floor import FloorState
 
-    class FakeAnalyst:
-        def estimate(self, market):
-            return Estimate(prob_yes=0.90, thesis="fake high-conviction read")
+    class FakeCouncil:
+        def debate(self, market, notes):
+            e = [ModelEstimate("a", 0.90, "fake high-conviction read"),
+                 ModelEstimate("b", 0.90, "fake high-conviction read")]
+            return Deliberation(market.id, e, e, 0.90, 0.01, notes)
+
+    class FakeResearch:
+        def context_for(self, market): return "notes"
 
     f = FloorState()
-    f._analysts = {k: FakeAnalyst() for k in f.books}
+    f.council = FakeCouncil()
+    f.research = FakeResearch()
+    f.guard = RiskGuard(max_position_usd=5, max_total_exposure_usd=50, max_daily_loss_usd=20)
     f._live_markets = f.markets
     f.live = True
     f.auto = True
-    for _ in range(f.LIVE_EVERY * 4):   # trigger several live evaluations
+    for _ in range(f.DELIBERATE_EVERY * 4):   # trigger several council evaluations
         f.tick()
     snap = f.snapshot()
     assert snap["live"] is True
-    assert snap["calls"] >= 1            # analyst was consulted
-    assert snap["tickets"]               # high prob vs market price -> edges -> tickets
+    assert snap["calls"] >= 1            # council was consulted
+    assert snap["debate"] is not None    # debate result exposed in snapshot
 
 
 def test_floor_auto_off_pauses_generation():
