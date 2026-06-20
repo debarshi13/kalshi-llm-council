@@ -86,7 +86,10 @@ class FloorState:
             self.research = MockResearch()
         self._live_markets = self._load_live_markets()
         self.live = True
-        self._log(f"LIVE armed — council active over {len(self._live_markets)} markets. Tokens will be spent.")
+        if self._live_markets:
+            self._log(f"LIVE — council active over {len(self._live_markets)} real Kalshi markets. Tokens will be spent.")
+        else:
+            self._log("⚠ LIVE ON but NO real markets loaded — council will idle (no debates, no orders). See warning above.")
 
     def arm_execution(self, host: str | None = None) -> None:
         """Turn on REAL order placement. Gated behind COUNCIL_MODE=live + Kalshi creds."""
@@ -126,20 +129,27 @@ class FloorState:
         self._log(f"LIVE ORDER PLACED — {bk['name']} {side.upper()} {contracts} {m.id} @ {round(entry*100)}¢")
 
     def _load_live_markets(self) -> list:
+        """Real, tradeable Kalshi markets — or [] (NEVER mock). In live mode the floor
+        must refuse to trade rather than silently place orders against fake tickers."""
         kid, pk = os.environ.get("KALSHI_API_KEY_ID"), os.environ.get("KALSHI_PRIVATE_KEY_PATH")
-        if kid and pk:
-            try:
-                from .market import KalshiMarketData
-                mk = [m for m in KalshiMarketData(kid, pk).list_markets()
-                      if 0.05 <= m.yes_price <= 0.95 and m.volume >= self.MIN_VOLUME]
-                # Target thin, under-followed (but tradeable) markets — cheap_score ranks them.
-                picks = sorted(mk, key=self.cheap_score, reverse=True)[:20] or mk[:20]
-                if picks:
-                    self._log(f"loaded {len(picks)} live Kalshi markets (thin-market focus)")
-                    return picks
-            except Exception as exc:  # noqa: BLE001
-                self._log(f"Kalshi load failed ({type(exc).__name__}); falling back to mock markets")
-        return self.markets
+        if not (kid and pk):
+            self._log("⚠ NO LIVE MARKETS — Kalshi credentials missing; live trading disabled.")
+            return []
+        try:
+            from .market import KalshiMarketData
+            raw = KalshiMarketData(kid, pk).list_markets()
+            mk = [m for m in raw if 0.05 <= m.yes_price <= 0.95 and m.volume >= self.MIN_VOLUME]
+            # Target thin, under-followed (but tradeable) markets — cheap_score ranks them.
+            picks = sorted(mk, key=self.cheap_score, reverse=True)[:20]
+            if picks:
+                self._log(f"loaded {len(picks)} live Kalshi markets (of {len(raw)} fetched, thin-market focus)")
+                return picks
+            self._log(f"⚠ NO TRADEABLE LIVE MARKETS — {len(raw)} fetched, none cleared "
+                      f"vol≥{self.MIN_VOLUME} & price 0.05–0.95; live trading disabled.")
+            return []
+        except Exception as exc:  # noqa: BLE001
+            self._log(f"⚠ Kalshi market load FAILED ({type(exc).__name__}: {exc}); live trading disabled.")
+            return []
 
     def cheap_score(self, m) -> float:
         """Rank toward thin, under-followed markets — where the price is closest to a

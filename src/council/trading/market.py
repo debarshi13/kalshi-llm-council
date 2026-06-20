@@ -122,9 +122,32 @@ class KalshiMarketData:
         resp.raise_for_status()
         return resp.json()
 
+    # Markets closing within this window are the ones actually being traded; a bare
+    # ?status=open query returns thousands of dead auto-generated markets first.
+    CLOSE_WINDOW_DAYS = 7
+    MAX_PAGES = 8
+
     def list_markets(self) -> list[Market]:
-        data = self._get("/markets", "?status=open&limit=100")
-        return [self._to_market(m) for m in data.get("markets", [])]
+        import time
+
+        now = int(time.time())
+        window = now + self.CLOSE_WINDOW_DAYS * 86400
+        out: list[Market] = []
+        cursor = ""
+        for _ in range(self.MAX_PAGES):
+            q = f"?status=open&min_close_ts={now}&max_close_ts={window}&limit=1000"
+            if cursor:
+                q += f"&cursor={cursor}"
+            data = self._get("/markets", q)
+            for raw in data.get("markets", []):
+                # KXMVE* are multi-game parlay legs — near-0 priced, not clean binary events.
+                if str(raw.get("ticker", "")).startswith("KXMVE"):
+                    continue
+                out.append(self._to_market(raw))
+            cursor = data.get("cursor") or ""
+            if not cursor:
+                break
+        return out
 
     def get_market(self, market_id: str) -> Market | None:
         data = self._get(f"/markets/{market_id}")
@@ -132,20 +155,27 @@ class KalshiMarketData:
         return self._to_market(m) if m else None
 
     @staticmethod
-    def _to_market(m: dict) -> Market:
-        # Kalshi quotes cents (0–100); prefer last trade, then bid/ask mid, then bid.
-        bid = m.get("yes_bid", 0) or 0
-        ask = m.get("yes_ask", 0) or 0
-        last = m.get("last_price", 0) or 0
-        cents = last or ((bid + ask) / 2 if ask else bid)
-        yes = cents / 100.0
-        status = "resolved" if m.get("status") == "settled" else "open"
+    def _fnum(x) -> float:
+        try:
+            return float(x)
+        except (TypeError, ValueError):
+            return 0.0
+
+    @classmethod
+    def _to_market(cls, m: dict) -> Market:
+        # Kalshi returns prices as `*_dollars` strings already in 0–1 (NOT cents) and
+        # sizes as `*_fp` strings. Prefer last trade, then bid/ask mid, then bid.
+        bid = cls._fnum(m.get("yes_bid_dollars"))
+        ask = cls._fnum(m.get("yes_ask_dollars"))
+        last = cls._fnum(m.get("last_price_dollars"))
+        yes = last or ((bid + ask) / 2 if ask else bid)
+        status = "resolved" if m.get("status") in ("settled", "finalized") else "open"
         outcome = {"yes": 1, "no": 0}.get(m.get("result", ""))
         return Market(
-            id=m.get("ticker", m.get("id", "?")),
+            id=m.get("ticker", "?"),
             title=m.get("title", ""),
             yes_price=min(max(yes, 0.0), 1.0),
-            volume=int(m.get("volume", 0) or 0),
+            volume=int(cls._fnum(m.get("volume_fp"))),
             status=status,
             outcome=outcome,
         )
