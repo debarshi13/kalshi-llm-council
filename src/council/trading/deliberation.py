@@ -101,3 +101,28 @@ class DeliberativeCouncil:
         converged = sum(ps) / len(ps)
         spread = statistics.pstdev(ps) if len(ps) > 1 else 0.0
         return Deliberation(market.id, round1, round2, round(converged, 4), round(spread, 4), notes)
+
+
+class MockCouncil:
+    """Offline stand-in for DeliberativeCouncil — produces a single converged
+    deliberation per market with no API calls, so the floor's free PAPER mode
+    deliberates exactly like LIVE (one decision per market) instead of emitting
+    independent, contradictory per-model tickets."""
+
+    def __init__(self, model_names: list[str]) -> None:
+        self.specs = list(model_names)   # only len() is read by the floor
+
+    def debate(self, market: Market, notes: str) -> Deliberation:
+        import random
+        base = market.yes_price
+        def est(name: str) -> ModelEstimate:
+            p = min(max(base + random.gauss(0, 0.10), 0.02), 0.98)
+            return ModelEstimate(name, round(p, 3), f"{name}: mock read around {p:.0%}")
+        round1 = [est(n) for n in self.specs]
+        # round 2 nudges each estimate toward the round-1 mean (simulated convergence)
+        m1 = sum(e.p_yes for e in round1) / len(round1)
+        round2 = [ModelEstimate(e.model, round((e.p_yes + m1) / 2, 3), e.thesis) for e in round1]
+        ps = [e.p_yes for e in round2]
+        converged = sum(ps) / len(ps)
+        spread = statistics.pstdev(ps) if len(ps) > 1 else 0.0
+        return Deliberation(market.id, round1, round2, round(converged, 4), round(spread, 4), notes)

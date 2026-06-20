@@ -18,7 +18,7 @@ from datetime import date
 
 from ..models import ModelClient, ModelSpec
 from .analysts import MockResearch
-from .deliberation import DeliberativeCouncil, decide
+from .deliberation import DeliberativeCouncil, MockCouncil, decide
 from .execution import KalshiTrader, RiskGuard
 from .ledger import kalshi_fee
 from .market import MockMarketData
@@ -33,8 +33,6 @@ BOOKS = [
 
 
 class FloorState:
-    EDGE = 0.06
-    MAX_PENDING = 2
     MAX_LIVE_CALLS = 300      # session backstop on top of the OpenRouter $ cap
     MIN_VOLUME = int(os.environ.get("MIN_MARKET_VOLUME", 50))  # below this a market can't reliably fill
 
@@ -53,13 +51,15 @@ class FloorState:
         self.live = False
         self.execute = False        # placing REAL orders (armed)
         self.trader: KalshiTrader | None = None
-        self.guard: RiskGuard | None = None
+        self.guard = RiskGuard(
+            max_position_usd=float(os.environ.get("MAX_POSITION_USD", 5)),
+            max_total_exposure_usd=float(os.environ.get("MAX_TOTAL_USD", 50)),
+            max_daily_loss_usd=float(os.environ.get("MAX_DAILY_LOSS_USD", 20)),
+        )
         self.calls = 0
         self._ids = itertools.count(1)
         self._tick_n = 0
         self._live_markets: list = []
-        self.council = None
-        self.research = None
         self.last_debate = None
         self.trades_today = 0
         self._day = date.today()
@@ -69,6 +69,10 @@ class FloorState:
         self.books["council"] = {"book": "★", "name": "Council", "key": "council",
                                  "skill": 0.5, "slug": "council", "strat": "consensus",
                                  "pnl": 0.0, "open": [], "wins": 0, "trades": 0}
+        # Free PAPER mode deliberates with a mock council (no API calls) so it
+        # produces ONE consensus decision per market — same shape as LIVE.
+        self.council = MockCouncil([bk["name"] for k, bk in self.books.items() if k != "council"])
+        self.research = MockResearch()
 
     # ── control ─────────────────────────────────────────────────────────────
     def enable_live(self, budget: float = 10.0) -> None:
@@ -149,7 +153,8 @@ class FloorState:
         return thin + tail_bonus
 
     def _council_eval(self) -> None:
-        if self.calls >= self.MAX_LIVE_CALLS:
+        # Token backstop only bounds LIVE (real-spend) mode; free mock runs unbounded.
+        if self.live and self.calls >= self.MAX_LIVE_CALLS:
             self.live = False
             self._log(f"live call cap ({self.MAX_LIVE_CALLS}) reached — LIVE auto-disabled")
             return
@@ -160,7 +165,11 @@ class FloorState:
             self._council_seen.clear()
         if self.trades_today >= self.MAX_TRADES_PER_DAY:
             return
-        pool = [m for m in self._live_markets if m.id not in self._council_seen] or self._live_markets
+        markets = self._live_markets if self.live else self.markets
+        pool = [m for m in markets if m.id not in self._council_seen]
+        if not pool:                       # debated them all — rotate fresh
+            self._council_seen.clear()
+            pool = list(markets)
         if not pool:
             return
         m = max(pool, key=self.cheap_score)
@@ -169,7 +178,8 @@ class FloorState:
         d = self.council.debate(m, notes)
         dec = decide(d, m, self.guard)
         self.last_debate = (d, dec)
-        self.calls += 1 + 2 * len(self.council.specs)  # 1 research + 2 rounds x N models
+        if self.live:
+            self.calls += 1 + 2 * len(self.council.specs)  # 1 research + 2 rounds x N models
         self._log(f"Council debate {m.id}: P(YES) {d.converged_p:.2f} vs {m.yes_price:.2f} "
                   f"(spread {d.spread:.3f}) — {dec.reason}")
         if not dec.place:
@@ -178,56 +188,38 @@ class FloorState:
         if self.execute and not self.frozen:
             self._auto_execute("council", m, dec.side, entry, dec.contracts)
             self.trades_today += 1
-        else:
+        elif self.live:
             # LIVE but unarmed: book a PAPER position so the council can be evaluated
             # on real prices without risking money (settles on the mock timer below).
-            bk = self.books["council"]
-            bk["open"].append({"tk": m.id, "contracts": dec.contracts, "entry": entry,
-                               "fee": kalshi_fee(entry, dec.contracts), "ttl": random.randint(2, 5)})
+            self.books["council"]["open"].append(
+                {"tk": m.id, "contracts": dec.contracts, "entry": entry,
+                 "fee": kalshi_fee(entry, dec.contracts), "ttl": random.randint(2, 5)})
             self.trades_today += 1
             self._log(f"PAPER FILL — Council {dec.side.upper()} {dec.contracts} {m.id} @ {dec.limit_price_cents}¢")
+        else:
+            self._council_ticket(m, d, dec)   # free PAPER mode: one ticket to ship/reject
+
+    def _council_ticket(self, m, d, dec) -> None:
+        """One consensus ticket for the user to ship/reject. Deduped per market so a
+        market already awaiting your decision isn't re-proposed every interval."""
+        if any(t["tk"] == m.id for t in self.tickets):
+            return
+        self.tickets.append({
+            "id": next(self._ids), "key": "council", "book": "★", "who": "Council",
+            "tk": m.id, "ti": m.title, "side": dec.side, "prob": round(d.converged_p, 2),
+            "price": round(m.yes_price, 2), "contracts": dec.contracts,
+            "entry": dec.limit_price_cents / 100.0, "thesis": dec.reason,
+        })
 
     # ── tick ────────────────────────────────────────────────────────────────
     def tick(self) -> None:
         self._tick_n += 1
         if not self.execute:
-            self._resolve_mock()       # only mock positions auto-settle; real ones settle on Kalshi
+            self._resolve_mock()       # mock + paper positions auto-settle; real ones settle on Kalshi
         if not self.auto or self.frozen:
             return
-        if self.live:
-            if self._tick_n % self.DELIBERATE_EVERY == 0:
-                self._council_eval()
-        else:
-            self._mock_gen()
-
-    def _mock_gen(self) -> None:
-        for key, bk in self.books.items():
-            if key == "council":
-                continue
-            if sum(1 for t in self.tickets if t["key"] == key) >= self.MAX_PENDING or random.random() < 0.45:
-                continue
-            m = random.choice(self.markets)
-            prob = min(max(m.yes_price + random.gauss(0, 0.14), 0.02), 0.98)
-            self._maybe_ticket(key, m, prob, thesis=None)
-
-    def _maybe_ticket(self, key: str, m, prob: float, thesis: str | None) -> None:
-        edge = prob - m.yes_price
-        if abs(edge) < self.EDGE:
-            return
-        bk = self.books[key]
-        side = "yes" if edge > 0 else "no"
-        entry = m.yes_price if side == "yes" else round(1 - m.yes_price, 2)
-        contracts = max(1, int(50 / max(entry, 0.05)))
-        if self.execute and not self.frozen:
-            self._auto_execute(key, m, side, entry, contracts)   # autonomous: no human gate
-            return
-        self.tickets.append({
-            "id": next(self._ids), "key": key, "book": bk["book"], "who": f"{bk['name']} · {bk['book']}",
-            "tk": m.id, "ti": m.title, "side": side, "prob": round(prob, 2),
-            "price": round(m.yes_price, 2), "contracts": contracts, "entry": entry,
-            "thesis": thesis or f"{abs(edge)*100:.0f}¢ edge vs the market.",
-        })
-        self._log(f"{bk['name']} wants {side.upper()} {m.id} ({abs(edge)*100:.0f}¢ edge)")
+        if self._tick_n % self.DELIBERATE_EVERY == 0:
+            self._council_eval()       # one deliberation per interval — mock OR live
 
     def _resolve_mock(self) -> None:
         for bk in self.books.values():
