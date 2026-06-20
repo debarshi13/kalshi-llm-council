@@ -79,14 +79,19 @@ class KalshiMarketData:
     are lazy so the rest of the package never depends on them.
     """
 
-    BASE = "https://api.elections.kalshi.com/trade-api/v2"
+    HOST = "https://api.elections.kalshi.com"
+    PREFIX = "/trade-api/v2"
 
-    def __init__(self, key_id: str, private_key_path: str, base_url: str | None = None) -> None:
+    def __init__(self, key_id: str, private_key_path: str, host: str | None = None) -> None:
         self.key_id = key_id
         self.private_key_path = private_key_path
-        self.base = base_url or self.BASE
+        self.host = host or self.HOST
 
-    def _signed_headers(self, method: str, path: str) -> dict:
+    def _signed_headers(self, method: str, full_path: str) -> dict:
+        """Kalshi signs RSA-PSS-SHA256 over: timestamp(ms) + METHOD + path.
+
+        `full_path` includes the /trade-api/v2 prefix and EXCLUDES the query string.
+        """
         import base64
         import time
 
@@ -96,7 +101,7 @@ class KalshiMarketData:
         ts = str(int(time.time() * 1000))
         with open(self.private_key_path, "rb") as fh:
             key = serialization.load_pem_private_key(fh.read(), password=None)
-        msg = (ts + method.upper() + path).encode()
+        msg = (ts + method.upper() + full_path).encode()
         sig = key.sign(
             msg,
             padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.DIGEST_LENGTH),
@@ -108,16 +113,17 @@ class KalshiMarketData:
             "KALSHI-ACCESS-TIMESTAMP": ts,
         }
 
-    def _get(self, path: str) -> dict:
+    def _get(self, endpoint: str, query: str = "") -> dict:
         import httpx
 
-        headers = self._signed_headers("GET", path)
-        resp = httpx.get(self.base + path, headers=headers, timeout=15)
+        full_path = self.PREFIX + endpoint              # signed (no query)
+        headers = self._signed_headers("GET", full_path)
+        resp = httpx.get(self.host + full_path + query, headers=headers, timeout=15)
         resp.raise_for_status()
         return resp.json()
 
     def list_markets(self) -> list[Market]:
-        data = self._get("/markets?status=open&limit=100")
+        data = self._get("/markets", "?status=open&limit=100")
         return [self._to_market(m) for m in data.get("markets", [])]
 
     def get_market(self, market_id: str) -> Market | None:
@@ -127,8 +133,12 @@ class KalshiMarketData:
 
     @staticmethod
     def _to_market(m: dict) -> Market:
-        # Kalshi quotes cents (0–100); convert to dollars.
-        yes = (m.get("yes_bid", 0) or 0) / 100.0
+        # Kalshi quotes cents (0–100); prefer last trade, then bid/ask mid, then bid.
+        bid = m.get("yes_bid", 0) or 0
+        ask = m.get("yes_ask", 0) or 0
+        last = m.get("last_price", 0) or 0
+        cents = last or ((bid + ask) / 2 if ask else bid)
+        yes = cents / 100.0
         status = "resolved" if m.get("status") == "settled" else "open"
         outcome = {"yes": 1, "no": 0}.get(m.get("result", ""))
         return Market(
