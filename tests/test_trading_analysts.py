@@ -66,3 +66,34 @@ def test_litellm_desk_builds_three_books():
     md = MockMarketData()
     desk = build_litellm_desk(md, client=FakeClient("{}"), spec=ModelSpec("mock/x", "g"))
     assert [b.name for b in desk.books] == ["A", "B", "C"]
+
+
+def test_floor_live_path_without_spend():
+    """Exercise the FloorState live path with injected fake analysts — no API calls."""
+    from council.trading.book import Estimate
+    from council.trading.floor import FloorState
+
+    class FakeAnalyst:
+        def estimate(self, market):
+            return Estimate(prob_yes=0.90, thesis="fake high-conviction read")
+
+    f = FloorState()
+    f._analysts = {k: FakeAnalyst() for k in f.books}
+    f._live_markets = f.markets
+    f.live = True
+    f.auto = True
+    for _ in range(f.LIVE_EVERY * 4):   # trigger several live evaluations
+        f.tick()
+    snap = f.snapshot()
+    assert snap["live"] is True
+    assert snap["calls"] >= 1            # analyst was consulted
+    assert snap["tickets"]               # high prob vs market price -> edges -> tickets
+
+
+def test_floor_auto_off_pauses_generation():
+    from council.trading.floor import FloorState
+    f = FloorState()
+    f.auto = False
+    for _ in range(20):
+        f.tick()
+    assert f.snapshot()["tickets"] == []  # paused: no new work

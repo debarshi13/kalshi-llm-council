@@ -47,6 +47,10 @@ class FloorStop(BaseModel):
     frozen: bool
 
 
+class FloorToggle(BaseModel):
+    on: bool
+
+
 def _page(name: str) -> FileResponse:
     p = WEB_DIR / name
     if not p.exists():
@@ -93,6 +97,21 @@ def create_app(settings: Settings | None = None, store: RunStore | None = None) 
     async def floor_stop(body: FloorStop):
         app.state.floor.frozen = body.frozen
         return {"frozen": body.frozen}
+
+    @app.post("/api/floor/auto")
+    async def floor_auto(body: FloorToggle):
+        app.state.floor.auto = body.on
+        return {"auto": body.on}
+
+    @app.post("/api/floor/live")
+    async def floor_live(body: FloorToggle):
+        """Arm/disarm the REAL models. Turning this on starts spending tokens."""
+        floor = app.state.floor
+        if body.on:
+            floor.enable_live(budget=app.state.settings.budget_usd)
+        else:
+            floor.live = False
+        return {"live": floor.live}
 
     # ── council runs (original) ─────────────────────────────────────────────
     @app.post("/api/runs")

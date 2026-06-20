@@ -30,6 +30,11 @@
   .stop{display:flex;align-items:center;gap:7px;background:var(--down);color:#1a0606;border:none;border-radius:8px;
     padding:8px 13px;font-weight:700;font-size:12.5px;letter-spacing:.03em}
   .stop[aria-pressed="true"]{background:#2a0d0d;color:var(--down);border:1px solid var(--down)}
+  .toggle{background:#141b26;color:var(--muted);border:1px solid var(--line);border-radius:8px;
+    padding:8px 12px;font-family:var(--mono);font-size:11.5px;font-weight:600;letter-spacing:.04em;transition:all .15s}
+  .toggle:hover{border-color:var(--line2)}
+  .toggle.on{background:rgba(61,220,132,.12);color:var(--up);border-color:var(--up)}
+  .toggle.live-on{background:rgba(255,93,93,.12);color:var(--down);border-color:var(--down)}
 
   .stage{position:relative;width:100%}
   canvas{width:100%;aspect-ratio:1000/620;display:block;border:1px solid var(--line);border-radius:14px;background:#0b0f16}
@@ -66,6 +71,8 @@
     <span class="logo"><b>◢</b> THE FLOOR</span>
     <span class="mode" id="mode">PAPER</span>
     <span class="out">SHIFT OUTPUT <b class="num" id="out">$0.00</b></span>
+    <button class="toggle on" id="auto" aria-pressed="true" title="Auto mode: floor works on its own">AUTO: ON</button>
+    <button class="toggle" id="live" aria-pressed="false" title="Mock (free) vs live models (spends tokens)">MODE: MOCK</button>
     <button class="stop" id="stop" aria-pressed="false">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
       STOP THE LINE
@@ -323,8 +330,29 @@ async function poll(){
     tickets=d.tickets;
     renderDock();
     if(d.frozen!==frozen){frozen=d.frozen; reflectStop();}
+    reflectToggles(d);
   }catch(_){ /* server not running — the floor stays idle */ }
 }
+
+function reflectToggles(d){
+  const a=document.getElementById("auto"), lv=document.getElementById("live"), mode=document.getElementById("mode");
+  a.classList.toggle("on", d.auto); a.setAttribute("aria-pressed",String(d.auto));
+  a.textContent="AUTO: "+(d.auto?"ON":"OFF");
+  lv.classList.toggle("live-on", d.live); lv.setAttribute("aria-pressed",String(d.live));
+  lv.textContent = d.live ? `LIVE · ${d.calls} calls` : "MODE: MOCK";
+  if(!frozen) mode.textContent = d.live ? "LIVE" : "PAPER";
+}
+document.getElementById("auto").addEventListener("click",async ()=>{
+  const on=document.getElementById("auto").getAttribute("aria-pressed")!=="true";
+  try{ await fetch("/api/floor/auto",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({on})}); }catch(_){}
+  poll();
+});
+document.getElementById("live").addEventListener("click",async ()=>{
+  const on=document.getElementById("live").getAttribute("aria-pressed")!=="true";
+  if(on && !confirm("Turn ON live mode? This runs the REAL models (Claude/Kimi/GLM) and spends OpenRouter tokens. Your $15 balance is the hard cap.")) return;
+  try{ await fetch("/api/floor/live",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({on})}); }catch(_){}
+  poll();
+});
 setInterval(poll,2500); poll();
 </script>
 </body>
