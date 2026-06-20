@@ -97,6 +97,7 @@ class ModelClient:
                 'Install it with: pip install -e ".[real]"  (or use engine: mock)'
             ) from exc
 
+        litellm.suppress_debug_info = True  # quiet the "Provider List" banner noise
         resp = litellm.completion(
             model=spec.model,
             messages=messages,

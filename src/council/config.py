@@ -67,8 +67,26 @@ def _env_bool(name: str, default: bool) -> bool:
     return val.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def load_env(path: str | Path = ".env") -> None:
+    """Load KEY=VALUE lines from a .env file into os.environ (without overriding real env).
+
+    Tiny, dependency-free. Lets `OPENROUTER_API_KEY`, `COUNCIL_*`, etc. live in
+    a gitignored .env without requiring the user to export them by hand.
+    """
+    p = Path(path)
+    if not p.exists():
+        return
+    for line in p.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, val = line.split("=", 1)
+        os.environ.setdefault(key.strip(), val.strip().strip('"').strip("'"))
+
+
 def load_settings(config_path: str | Path = "config.yaml") -> Settings:
-    """Load and validate settings from YAML + environment."""
+    """Load and validate settings from YAML + environment (.env auto-loaded)."""
+    load_env()
     path = Path(config_path)
     raw = yaml.safe_load(path.read_text()) if path.exists() else {}
     raw["budget_usd"] = float(os.environ.get("COUNCIL_BUDGET_USD", raw.get("budget_usd", 2.0)))

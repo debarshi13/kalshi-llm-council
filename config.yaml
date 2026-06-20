@@ -11,11 +11,11 @@ engine: litellm         # litellm | mock | crewai  (litellm = live via LiteLLM; 
 
 roles:
   architect:
-    model: "openrouter/anthropic/claude-opus-4-8"
+    model: "openrouter/anthropic/claude-opus-4.8"
     goal: "Decompose the task and produce a clear, minimal implementation spec the implementer can follow."
     temperature: 0.2
   implementer:
-    model: "openrouter/moonshotai/kimi-k2"
+    model: "openrouter/moonshotai/kimi-k2.6"
     goal: "Write correct, minimal code that satisfies the architect's spec. Smallest change that works."
     temperature: 0.1
   reviewer:

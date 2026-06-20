@@ -24,9 +24,13 @@ dependencies = [
 # stands in for live models. Install with: pip install -e ".[real]"
 # (CrewAI/litellm may lag the newest Python; the core never depends on them.)
 [project.optional-dependencies]
+# litellm is the live engine. CrewAI is a separate extra because it cannot
+# install on Python 3.14 (requires <3.14); keep it optional and out of [real].
 real = [
-    "crewai>=0.80",
     "litellm>=1.40",
+]
+crewai = [
+    "crewai>=0.80",
 ]
 dev = [
     "pytest>=8.1",
