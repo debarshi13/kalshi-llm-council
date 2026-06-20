@@ -75,6 +75,7 @@ def test_floor_live_path_without_spend():
     from council.trading.floor import FloorState
 
     class FakeCouncil:
+        specs = [1, 2, 3]
         def debate(self, market, notes):
             e = [ModelEstimate("a", 0.90, "fake high-conviction read"),
                  ModelEstimate("b", 0.90, "fake high-conviction read")]

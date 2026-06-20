@@ -14,10 +14,11 @@ import itertools
 import os
 import random
 import time
+from datetime import date
 
 from ..models import ModelClient, ModelSpec
 from .analysts import MockResearch
-from .deliberation import DeliberativeCouncil, decide, Decision
+from .deliberation import DeliberativeCouncil, decide
 from .execution import KalshiTrader, RiskGuard
 from .ledger import kalshi_fee
 from .market import MockMarketData
@@ -34,7 +35,6 @@ BOOKS = [
 class FloorState:
     EDGE = 0.06
     MAX_PENDING = 2
-    LIVE_EVERY = 5            # evaluate one live (book,market) every Nth tick (cost pacing)
     MAX_LIVE_CALLS = 300      # session backstop on top of the OpenRouter $ cap
 
     def __init__(self) -> None:
@@ -56,12 +56,12 @@ class FloorState:
         self.calls = 0
         self._ids = itertools.count(1)
         self._tick_n = 0
-        self._rr = 0
         self._live_markets: list = []
         self.council = None
         self.research = None
         self.last_debate = None
         self.trades_today = 0
+        self._day = date.today()
         self.DELIBERATE_EVERY = int(os.environ.get("DELIBERATE_EVERY", 5))
         self.MAX_TRADES_PER_DAY = int(os.environ.get("MAX_TRADES_PER_DAY", 10))
         self._council_seen: set[str] = set()
@@ -143,6 +143,11 @@ class FloorState:
             self.live = False
             self._log(f"live call cap ({self.MAX_LIVE_CALLS}) reached — LIVE auto-disabled")
             return
+        today = date.today()
+        if today != self._day:
+            self._day = today
+            self.trades_today = 0
+            self._council_seen.clear()
         if self.trades_today >= self.MAX_TRADES_PER_DAY:
             return
         pool = [m for m in self._live_markets if m.id not in self._council_seen] or self._live_markets
@@ -154,18 +159,28 @@ class FloorState:
         d = self.council.debate(m, notes)
         dec = decide(d, m, self.guard)
         self.last_debate = (d, dec)
-        self.calls += 1
+        self.calls += 1 + 2 * len(self.council.specs)  # 1 research + 2 rounds x N models
         self._log(f"Council debate {m.id}: P(YES) {d.converged_p:.2f} vs {m.yes_price:.2f} "
                   f"(spread {d.spread:.3f}) — {dec.reason}")
-        if dec.place and self.execute and not self.frozen:
-            entry = dec.limit_price_cents / 100.0
+        if not dec.place:
+            return
+        entry = dec.limit_price_cents / 100.0
+        if self.execute and not self.frozen:
             self._auto_execute("council", m, dec.side, entry, dec.contracts)
             self.trades_today += 1
+        else:
+            # LIVE but unarmed: book a PAPER position so the council can be evaluated
+            # on real prices without risking money (settles on the mock timer below).
+            bk = self.books["council"]
+            bk["open"].append({"tk": m.id, "contracts": dec.contracts, "entry": entry,
+                               "fee": kalshi_fee(entry, dec.contracts), "ttl": random.randint(2, 5)})
+            self.trades_today += 1
+            self._log(f"PAPER FILL — Council {dec.side.upper()} {dec.contracts} {m.id} @ {dec.limit_price_cents}¢")
 
     # ── tick ────────────────────────────────────────────────────────────────
     def tick(self) -> None:
         self._tick_n += 1
-        if not self.live:
+        if not self.execute:
             self._resolve_mock()       # only mock positions auto-settle; real ones settle on Kalshi
         if not self.auto or self.frozen:
             return
@@ -177,6 +192,8 @@ class FloorState:
 
     def _mock_gen(self) -> None:
         for key, bk in self.books.items():
+            if key == "council":
+                continue
             if sum(1 for t in self.tickets if t["key"] == key) >= self.MAX_PENDING or random.random() < 0.45:
                 continue
             m = random.choice(self.markets)

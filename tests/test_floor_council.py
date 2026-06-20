@@ -5,7 +5,7 @@ from council.trading.market import Market
 from council.trading.execution import RiskGuard
 
 class FakeCouncil:
-    def __init__(self, p, spread): self.p, self.spread = p, spread
+    def __init__(self, p, spread): self.p, self.spread = p, spread; self.specs = [1, 2, 3]
     def debate(self, market, notes):
         e = [ModelEstimate("a", self.p, "t"), ModelEstimate("b", self.p, "t")]
         return Deliberation(market.id, e, e, self.p, self.spread, notes)
@@ -63,3 +63,20 @@ def test_snapshot_exposes_debate():
     assert snap["debate"]["market_id"] == "FED-DEC-CUT"
     assert len(snap["debate"]["round2"]) == 2
     assert snap["debate"]["decision"]["place"] is True
+
+def test_daily_trade_cap_resets_on_new_day():
+    from datetime import date, timedelta
+    f = _armed_floor(FakeCouncil(p=0.50, spread=0.01))
+    f.trades_today = 99
+    f._day = date.today() - timedelta(days=1)
+    f._council_eval()
+    assert f.trades_today == 1            # reset on new day, then +1 for this trade
+    assert len(f.trader.orders) == 1
+
+def test_council_paper_fills_when_live_unarmed():
+    f = _armed_floor(FakeCouncil(p=0.50, spread=0.01))
+    f.execute = False                     # LIVE but NOT armed
+    f._council_eval()
+    assert f.trader.orders == []          # no real order placed
+    assert len(f.books["council"]["open"]) == 1
+    assert f.trades_today == 1
