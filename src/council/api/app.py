@@ -113,6 +113,20 @@ def create_app(settings: Settings | None = None, store: RunStore | None = None) 
             floor.live = False
         return {"live": floor.live}
 
+    @app.post("/api/floor/arm")
+    async def floor_arm(body: FloorToggle):
+        """Arm/disarm REAL autonomous order placement. Spends real money when armed."""
+        floor = app.state.floor
+        if body.on:
+            try:
+                floor.arm_execution()
+            except Exception as exc:  # surfaces the gate reason (e.g. COUNCIL_MODE not live)
+                raise HTTPException(400, str(exc))
+        else:
+            floor.execute = False
+            floor._log("execution DISARMED")
+        return {"execute": floor.execute}
+
     # ── council runs (original) ─────────────────────────────────────────────
     @app.post("/api/runs")
     async def start_run(body: StartRun):

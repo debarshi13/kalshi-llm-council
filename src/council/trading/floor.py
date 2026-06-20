@@ -17,6 +17,7 @@ import time
 
 from ..models import ModelClient, ModelSpec
 from .analysts import LiteLLMAnalyst, MockResearch
+from .execution import KalshiTrader, RiskGuard
 from .ledger import kalshi_fee
 from .market import MockMarketData
 
@@ -47,6 +48,9 @@ class FloorState:
         self.frozen = False
         self.auto = True
         self.live = False
+        self.execute = False        # placing REAL orders (armed)
+        self.trader: KalshiTrader | None = None
+        self.guard: RiskGuard | None = None
         self.calls = 0
         self._ids = itertools.count(1)
         self._tick_n = 0
@@ -66,6 +70,43 @@ class FloorState:
         self._live_markets = self._load_live_markets()
         self.live = True
         self._log(f"LIVE armed — real models active over {len(self._live_markets)} markets. Tokens will be spent.")
+
+    def arm_execution(self, host: str | None = None) -> None:
+        """Turn on REAL order placement. Gated behind COUNCIL_MODE=live + Kalshi creds."""
+        if os.environ.get("COUNCIL_MODE", "paper").lower() != "live":
+            raise RuntimeError("set COUNCIL_MODE=live in .env before arming real execution")
+        kid, pk = os.environ.get("KALSHI_API_KEY_ID"), os.environ.get("KALSHI_PRIVATE_KEY_PATH")
+        if not (kid and pk):
+            raise RuntimeError("Kalshi credentials missing from .env")
+        if not self.live:
+            self.enable_live()
+        self.trader = KalshiTrader(kid, pk, host=host or os.environ.get("KALSHI_HOST"))
+        self.guard = RiskGuard(
+            max_position_usd=float(os.environ.get("MAX_POSITION_USD", 5)),
+            max_total_exposure_usd=float(os.environ.get("MAX_TOTAL_USD", 50)),
+            max_daily_loss_usd=float(os.environ.get("MAX_DAILY_LOSS_USD", 20)),
+        )
+        self.execute = True
+        self._log(f"LIVE EXECUTION ARMED — real orders now place automatically. Caps: "
+                  f"position ${self.guard.max_position_usd:.0f} · total ${self.guard.max_total_exposure_usd:.0f} · "
+                  f"daily-loss ${self.guard.max_daily_loss_usd:.0f}.")
+
+    def _auto_execute(self, key, m, side, entry, contracts) -> None:
+        bk = self.books[key]
+        cost = contracts * entry
+        exposure = sum(p["contracts"] * p["entry"] for b in self.books.values() for p in b["open"])
+        ok, reason = self.guard.check(cost, exposure, self.output)
+        if not ok:
+            self._log(f"RISK BLOCKED — {bk['name']} {side.upper()} {m.id}: {reason}")
+            return
+        try:
+            self.trader.place_order(m.id, side, contracts, round(entry * 100))
+        except Exception as exc:  # noqa: BLE001 — never let a broker error crash the loop
+            self._log(f"ORDER FAILED — {bk['name']} {m.id}: {type(exc).__name__}")
+            return
+        bk["open"].append({"tk": m.id, "contracts": contracts, "entry": entry,
+                           "fee": kalshi_fee(entry, contracts), "ttl": 9_999})
+        self._log(f"LIVE ORDER PLACED — {bk['name']} {side.upper()} {contracts} {m.id} @ {round(entry*100)}¢")
 
     def _load_live_markets(self) -> list:
         kid, pk = os.environ.get("KALSHI_API_KEY_ID"), os.environ.get("KALSHI_PRIVATE_KEY_PATH")
@@ -131,6 +172,9 @@ class FloorState:
         side = "yes" if edge > 0 else "no"
         entry = m.yes_price if side == "yes" else round(1 - m.yes_price, 2)
         contracts = max(1, int(50 / max(entry, 0.05)))
+        if self.execute and not self.frozen:
+            self._auto_execute(key, m, side, entry, contracts)   # autonomous: no human gate
+            return
         self.tickets.append({
             "id": next(self._ids), "key": key, "book": bk["book"], "who": f"{bk['name']} · {bk['book']}",
             "tk": m.id, "ti": m.title, "side": side, "prob": round(prob, 2),
@@ -179,6 +223,7 @@ class FloorState:
             "frozen": self.frozen,
             "auto": self.auto,
             "live": self.live,
+            "execute": self.execute,
             "calls": self.calls,
             "books": [
                 {"book": bk["book"], "name": bk["name"], "key": k, "pnl": round(bk["pnl"], 2),

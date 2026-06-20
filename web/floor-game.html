@@ -35,6 +35,8 @@
   .toggle:hover{border-color:var(--line2)}
   .toggle.on{background:rgba(61,220,132,.12);color:var(--up);border-color:var(--up)}
   .toggle.live-on{background:rgba(255,93,93,.12);color:var(--down);border-color:var(--down)}
+  .toggle.arm-on{background:var(--down);color:#1a0606;border-color:var(--down);font-weight:700;animation:armthrob 1.8s infinite}
+  @keyframes armthrob{0%,100%{box-shadow:0 0 0 0 rgba(255,93,93,.5)}50%{box-shadow:0 0 0 6px rgba(255,93,93,0)}}
 
   .stage{position:relative;width:100%}
   canvas{width:100%;aspect-ratio:1000/620;display:block;border:1px solid var(--line);border-radius:14px;background:#0b0f16}
@@ -73,6 +75,7 @@
     <span class="out">SHIFT OUTPUT <b class="num" id="out">$0.00</b></span>
     <button class="toggle on" id="auto" aria-pressed="true" title="Auto mode: floor works on its own">AUTO: ON</button>
     <button class="toggle" id="live" aria-pressed="false" title="Mock (free) vs live models (spends tokens)">MODE: MOCK</button>
+    <button class="toggle" id="arm" aria-pressed="false" title="Arm REAL autonomous order placement (real money)">ARM $</button>
     <button class="stop" id="stop" aria-pressed="false">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
       STOP THE LINE
@@ -340,7 +343,10 @@ function reflectToggles(d){
   a.textContent="AUTO: "+(d.auto?"ON":"OFF");
   lv.classList.toggle("live-on", d.live); lv.setAttribute("aria-pressed",String(d.live));
   lv.textContent = d.live ? `LIVE · ${d.calls} calls` : "MODE: MOCK";
-  if(!frozen) mode.textContent = d.live ? "LIVE" : "PAPER";
+  const arm=document.getElementById("arm");
+  arm.classList.toggle("arm-on", !!d.execute); arm.setAttribute("aria-pressed",String(!!d.execute));
+  arm.textContent = d.execute ? "● LIVE TRADING" : "ARM $";
+  if(!frozen) mode.textContent = d.execute ? "LIVE $$$" : d.live ? "LIVE" : "PAPER";
 }
 document.getElementById("auto").addEventListener("click",async ()=>{
   const on=document.getElementById("auto").getAttribute("aria-pressed")!=="true";
@@ -351,6 +357,15 @@ document.getElementById("live").addEventListener("click",async ()=>{
   const on=document.getElementById("live").getAttribute("aria-pressed")!=="true";
   if(on && !confirm("Turn ON live mode? This runs the REAL models (Claude/Kimi/GLM) and spends OpenRouter tokens. Your $15 balance is the hard cap.")) return;
   try{ await fetch("/api/floor/live",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({on})}); }catch(_){}
+  poll();
+});
+document.getElementById("arm").addEventListener("click",async ()=>{
+  const on=document.getElementById("arm").getAttribute("aria-pressed")!=="true";
+  if(on && !confirm("ARM REAL-MONEY auto-execution?\n\nThe council will place REAL orders on your Kalshi account automatically, with NO approval step. Only the risk caps and the kill switch protect your balance. Requires COUNCIL_MODE=live in .env.\n\nContinue?")) return;
+  try{
+    const r=await fetch("/api/floor/arm",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({on})});
+    if(!r.ok){const j=await r.json().catch(()=>({})); alert("Could not arm: "+(j.detail||("HTTP "+r.status)));}
+  }catch(_){}
   poll();
 });
 setInterval(poll,2500); poll();

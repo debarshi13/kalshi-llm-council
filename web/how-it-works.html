@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>How the mock floor works</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#070a0f;--panel:#10151e;--line:#222c3a;--ink:#eaf0f7;--muted:#8593a8;--faint:#566073;
+    --accent:#4dd0ff;--up:#3ddc84;--down:#ff5d5d;--warn:#ffb74d;
+    --mono:"IBM Plex Mono",ui-monospace,monospace;--disp:"Bricolage Grotesque",ui-sans-serif,system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:16px/1.65 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+  .wrap{max-width:680px;margin:0 auto;padding:48px 22px 90px}
+  h1{font-family:var(--disp);font-weight:800;font-size:34px;letter-spacing:-.02em;margin:0 0 8px}
+  .lede{color:var(--muted);font-size:17px;margin:0 0 28px}
+  code{font-family:var(--mono);font-size:.9em;background:#141b26;border:1px solid var(--line);border-radius:5px;padding:1px 6px}
+
+  .banner{display:flex;gap:12px;align-items:flex-start;border:1px solid var(--warn);background:rgba(255,183,77,.08);
+    border-radius:12px;padding:16px 18px;margin:0 0 30px}
+  .banner svg{flex:0 0 auto;color:var(--warn);margin-top:2px}
+  .banner b{font-family:var(--disp)}
+
+  .step{display:flex;gap:16px;padding:18px 0;border-bottom:1px solid var(--line)}
+  .n{flex:0 0 auto;width:34px;height:34px;border-radius:9px;display:grid;place-items:center;
+    font-family:var(--disp);font-weight:800;font-size:16px;color:#06222c;background:var(--accent)}
+  .step h2{font-family:var(--disp);font-weight:700;font-size:18px;margin:4px 0 6px}
+  .step p{margin:0;color:var(--muted)}
+  .step p b{color:var(--ink);font-weight:600}
+
+  .odds{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap}
+  .chip{font-family:var(--mono);font-size:13px;padding:5px 11px;border-radius:999px;border:1px solid var(--line);background:#141b26}
+  .chip b{font-weight:600}
+  .win{color:var(--up)} .lose{color:var(--down)}
+
+  .live{border:1px solid rgba(61,220,132,.4);background:rgba(61,220,132,.06);border-radius:12px;padding:18px 20px;margin-top:34px}
+  .live h2{font-family:var(--disp);font-weight:700;font-size:18px;margin:0 0 6px;color:var(--up)}
+  .live p{margin:0;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>How the floor's numbers work</h1>
+  <p class="lede">In short: right now they're <b>made up</b>. Here's exactly how.</p>
+
+  <div class="banner">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+    <div><b>This is a demo.</b> The trades, wins, and P&amp;L on the mock floor are random. They don't reflect real markets, real model skill, or anything that would happen with real money.</div>
+  </div>
+
+  <div class="step">
+    <div class="n">1</div>
+    <div>
+      <h2>Trades are random guesses</h2>
+      <p>A worker picks a market and invents a number near its price (price plus random wiggle). If that number lands far enough from the price, it raises a "trade." <b>There's no real thinking — it's noise.</b></p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="n">2</div>
+    <div>
+      <h2>Win or lose is a loaded coin flip</h2>
+      <p>A few seconds after you approve a trade, it "resolves" by a coin flip. The coin is weighted per model — not by anything they actually did:</p>
+      <div class="odds">
+        <span class="chip">Claude <b class="win">wins 56%</b></span>
+        <span class="chip">Kimi K2 <b class="win">wins 61%</b></span>
+        <span class="chip">GLM-5.2 <b class="lose">wins 43%</b></span>
+      </div>
+      <p style="margin-top:12px">I picked those numbers so the floor looks alive and one book clearly loses. That's all.</p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="n">3</div>
+    <div>
+      <h2>The money math is the only real part</h2>
+      <p>If a trade wins you gain <code>contracts × (1 − price)</code>; if it loses you drop the whole stake. Fees use Kalshi's real formula. But since the win itself is fake, <b>the P&amp;L is fake too.</b></p>
+    </div>
+  </div>
+
+  <div class="live">
+    <h2>What "LIVE" mode does differently</h2>
+    <p>Flip the floor to LIVE and the guess comes from the <b>real models reading real Kalshi prices</b>, and approved trades wait for the <b>real market to settle</b> — no coin flips. That's the real thing; the mock is just to test the buttons.</p>
+  </div>
+</div>
+</body>
+</html>
