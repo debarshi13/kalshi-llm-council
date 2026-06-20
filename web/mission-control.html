@@ -3,336 +3,395 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Council · Kalshi Mission Control</title>
+<title>Council · The Floor — AI Trading Sweatshop</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
 <style>
   :root{
-    --bg:#0a0e14; --panel:#121822; --panel2:#161d28; --line:#232c3a; --line2:#2e3a4d;
-    --ink:#e8edf4; --muted:#8593a8; --faint:#5b6678;
-    --accent:#4dd0ff;
-    --up:#3ddc84; --down:#ff5d5d; --pending:#ffb74d;
-    --A:#4dd0ff; --B:#b794ff; --C:#f5c451;
+    --bg:#070a0f; --panel:#10151e; --panel2:#141b26; --line:#222c3a; --line2:#30506a;
+    --ink:#eaf0f7; --muted:#8593a8; --faint:#566073;
+    --accent:#4dd0ff; --up:#3ddc84; --down:#ff5d5d; --pending:#ffb74d;
+    --claude:#ff9d5c; --kimi:#7cc6ff; --glm:#b794ff;
     --mono:"IBM Plex Mono",ui-monospace,monospace;
-    --disp:"Space Grotesk",ui-sans-serif,system-ui,sans-serif;
-    --r:12px;
+    --disp:"Bricolage Grotesque",ui-sans-serif,system-ui,sans-serif;
   }
   *{box-sizing:border-box}
-  html,body{height:100%}
-  body{margin:0;background:var(--bg);color:var(--ink);
-    font:14px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
-    display:flex;flex-direction:column}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);overflow-x:hidden;
+    font:14px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
   .num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  .disp{font-family:var(--disp)}
   button{font:inherit;cursor:pointer}
-  :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
-  @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:6px}
+  h1,h2{font-family:var(--disp);margin:0;line-height:.96;letter-spacing:-.02em}
+  .scan{position:fixed;inset:0;pointer-events:none;z-index:1;opacity:.5;
+    background:repeating-linear-gradient(0deg,transparent 0 3px,rgba(0,0,0,.18) 3px 4px)}
 
-  /* ── Top bar ─────────────────────────────────────── */
-  header{display:flex;align-items:center;gap:20px;padding:12px 20px;
-    background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap}
-  .brand{font-family:var(--disp);font-weight:600;font-size:16px;letter-spacing:.2px;display:flex;align-items:center;gap:9px}
-  .brand svg{color:var(--accent)}
-  .brand small{color:var(--muted);font-weight:400}
-  .mode{font-family:var(--mono);font-size:12px;font-weight:600;letter-spacing:.08em;
-    padding:3px 10px;border-radius:999px;border:1px solid var(--pending);color:var(--pending);background:rgba(255,183,77,.08)}
-  .mode[data-live="true"]{border-color:var(--down);color:var(--down);background:rgba(255,93,93,.1)}
-  .hud{display:flex;gap:22px;margin-left:auto;align-items:center}
-  .stat{display:flex;flex-direction:column;line-height:1.25}
-  .stat .k{font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--faint)}
-  .stat .v{font-family:var(--mono);font-size:16px;font-weight:600}
-  .v.up{color:var(--up)} .v.down{color:var(--down)}
-  .kill{display:flex;align-items:center;gap:7px;background:transparent;color:var(--down);
-    border:1px solid var(--down);border-radius:8px;padding:7px 12px;font-weight:600;font-size:13px;
-    transition:background .18s,color .18s}
-  .kill:hover{background:var(--down);color:#1a0606}
-  .kill[aria-pressed="true"]{background:var(--down);color:#1a0606}
+  /* ── persistent chrome ───────────────────────────── */
+  .topbar{position:fixed;top:0;left:0;right:0;z-index:40;display:flex;align-items:center;gap:14px;
+    padding:10px 18px;background:rgba(10,14,20,.82);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+  .logo{font-family:var(--disp);font-weight:800;font-size:15px;letter-spacing:.02em;display:flex;align-items:center;gap:8px}
+  .logo b{color:var(--accent)}
+  .mode{font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.12em;padding:3px 9px;border-radius:999px;
+    border:1px solid var(--pending);color:var(--pending);background:rgba(255,183,77,.08)}
+  .topbar .out{margin-left:auto;font-family:var(--mono);font-size:13px;color:var(--muted)}
+  .topbar .out b{color:var(--up);font-size:15px}
+  .stop{display:flex;align-items:center;gap:7px;background:var(--down);color:#1a0606;border:none;
+    border-radius:8px;padding:8px 13px;font-weight:700;font-size:12.5px;letter-spacing:.04em;
+    box-shadow:0 0 0 0 rgba(255,93,93,.5);transition:box-shadow .2s,filter .15s}
+  .stop:hover{filter:brightness(1.08)}
+  .stop[aria-pressed="true"]{background:#2a0d0d;color:var(--down);border:1px solid var(--down);animation:none}
+  @keyframes throb{0%,100%{box-shadow:0 0 0 0 rgba(255,93,93,.45)}50%{box-shadow:0 0 0 8px rgba(255,93,93,0)}}
+  .stop:not([aria-pressed="true"]){animation:throb 2.4s infinite}
 
-  /* ── Layout ──────────────────────────────────────── */
-  main{flex:1;display:grid;grid-template-columns:248px 1fr 340px;gap:14px;padding:14px;min-height:0}
-  .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);display:flex;flex-direction:column;min-height:0;overflow:hidden}
-  .panel > h2{margin:0;padding:11px 15px;font-family:var(--disp);font-size:12px;font-weight:600;
-    text-transform:uppercase;letter-spacing:.07em;color:var(--muted);border-bottom:1px solid var(--line);
-    display:flex;align-items:center;justify-content:space-between}
-  .panel .scroll{overflow:auto;padding:8px}
+  /* ticker marquee */
+  .ticker{position:fixed;bottom:0;left:0;right:0;z-index:40;height:34px;overflow:hidden;
+    background:#05080c;border-top:1px solid var(--line);display:flex;align-items:center}
+  .ticker-track{display:flex;white-space:nowrap;will-change:transform}
+  .ticker-track span{font-family:var(--mono);font-size:12px;color:var(--muted);padding:0 26px}
+  .ticker-track b.up{color:var(--up)} .ticker-track b.dn{color:var(--down)} .ticker-track b.ed{color:var(--pending)}
 
-  /* ── Watchlist ───────────────────────────────────── */
-  .mkt{display:block;width:100%;text-align:left;background:var(--panel2);border:1px solid var(--line);
-    border-radius:9px;padding:9px 11px;margin-bottom:7px;transition:border-color .18s,background .18s}
-  .mkt:hover{border-color:var(--line2);background:#1a2230}
-  .mkt .tk{font-family:var(--mono);font-size:11px;color:var(--faint);letter-spacing:.03em}
-  .mkt .ti{font-size:12.5px;margin:2px 0 7px;color:var(--ink);line-height:1.35}
-  .mkt .row{display:flex;align-items:center;justify-content:space-between}
-  .price{font-family:var(--mono);font-size:14px;font-weight:600}
-  .edge{font-family:var(--mono);font-size:11px;padding:1px 7px;border-radius:999px}
-  .edge.pos{color:var(--up);background:rgba(61,220,132,.1)}
-  .edge.neg{color:var(--down);background:rgba(255,93,93,.1)}
-  .edge.flat{color:var(--faint);background:rgba(91,102,120,.12)}
+  section{position:relative;z-index:2}
 
-  /* ── Books ───────────────────────────────────────── */
-  .books{display:grid;grid-template-rows:repeat(3,1fr);gap:14px}
-  .book{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);
-    display:grid;grid-template-columns:1fr 1.1fr;overflow:hidden}
-  .book .left{padding:14px 16px;border-right:1px solid var(--line)}
-  .book .bk-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}
-  .badge{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;
-    font-family:var(--disp);font-weight:700;font-size:14px;color:#0a0e14}
-  .book[data-book="A"] .badge{background:var(--A)} .book[data-book="A"] .accent{color:var(--A)}
-  .book[data-book="B"] .badge{background:var(--B)} .book[data-book="B"] .accent{color:var(--B)}
-  .book[data-book="C"] .badge{background:var(--C)} .book[data-book="C"] .accent{color:var(--C)}
-  .bk-head .name{font-family:var(--disp);font-weight:600;font-size:14px}
-  .bk-head .strat{font-size:11px;color:var(--muted)}
-  .pnl{font-family:var(--mono);font-size:26px;font-weight:600;line-height:1}
-  .pnl.up{color:var(--up)} .pnl.down{color:var(--down)}
-  .pnl-sub{font-size:11px;color:var(--faint);margin-top:3px}
-  .metrics{display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;padding:14px 16px;align-content:start}
-  .metric .k{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--faint)}
-  .metric .v{font-family:var(--mono);font-size:15px;font-weight:600;margin-top:1px}
-  .calib{grid-column:1/-1;display:flex;align-items:center;gap:8px;margin-top:2px;
-    padding-top:9px;border-top:1px solid var(--line)}
-  .chip{font-family:var(--mono);font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:999px}
-  .chip.beat{color:var(--up);background:rgba(61,220,132,.12)}
-  .chip.miss{color:var(--down);background:rgba(255,93,93,.12)}
+  /* ── HERO ────────────────────────────────────────── */
+  .hero{min-height:100vh;display:grid;place-content:center;text-align:center;padding:120px 20px 60px;
+    background:radial-gradient(900px 500px at 50% 0%,rgba(77,208,255,.10),transparent 70%)}
+  .hero .kicker{font-family:var(--mono);font-size:13px;letter-spacing:.4em;color:var(--accent);text-transform:uppercase;margin-bottom:18px}
+  .hero h1{font-size:clamp(48px,12vw,150px);font-weight:800}
+  .hero h1 .word{display:inline-block}
+  .hero .sub{color:var(--muted);font-size:17px;max-width:560px;margin:22px auto 0;line-height:1.6}
+  .gauges{display:flex;gap:38px;justify-content:center;flex-wrap:wrap;margin-top:44px}
+  .gauge .g-k{font-family:var(--mono);font-size:11px;letter-spacing:.12em;color:var(--faint);text-transform:uppercase}
+  .gauge .g-v{font-family:var(--mono);font-size:34px;font-weight:600;margin-top:4px}
+  .quota{width:240px;margin:46px auto 0}
+  .quota .lab{display:flex;justify-content:space-between;font-family:var(--mono);font-size:11px;color:var(--muted);margin-bottom:6px}
+  .bar{height:9px;border-radius:99px;background:var(--panel2);overflow:hidden;border:1px solid var(--line)}
+  .bar > i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--accent),var(--up))}
+  .cue{margin-top:54px;font-family:var(--mono);font-size:12px;color:var(--faint);letter-spacing:.2em}
+  .cue::after{content:"↓";display:block;font-size:20px;margin-top:8px;animation:bob 1.6s infinite}
+  @keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(7px)}}
 
-  /* ── Right column ────────────────────────────────── */
-  .right{display:grid;grid-template-rows:auto 1fr;gap:14px;min-height:0}
-  .appr{background:var(--panel2);border:1px solid rgba(255,183,77,.4);border-radius:10px;padding:12px;margin-bottom:9px}
-  .appr .top{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
-  .appr .tk{font-family:var(--mono);font-size:11px;color:var(--muted)}
-  .appr .side{font-family:var(--mono);font-weight:600;font-size:12px;padding:1px 7px;border-radius:5px}
-  .side.yes{color:var(--up);background:rgba(61,220,132,.12)}
-  .side.no{color:var(--down);background:rgba(255,93,93,.12)}
-  .appr .ti{font-size:12.5px;margin:6px 0}
-  .appr .why{font-size:11.5px;color:var(--muted);line-height:1.45;margin:6px 0 10px}
-  .appr .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:11px}
-  .appr .grid div{font-family:var(--mono);font-size:11px}
-  .appr .grid .lbl{color:var(--faint);font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;display:block}
-  .appr .acts{display:flex;gap:8px}
-  .appr .acts button{flex:1;border:none;border-radius:7px;padding:8px;font-weight:600;font-size:12.5px;
-    display:flex;align-items:center;justify-content:center;gap:6px;transition:filter .15s}
-  .ok{background:var(--up);color:#052b13} .ok:hover{filter:brightness(1.1)}
-  .deny{background:var(--panel);color:var(--down);border:1px solid var(--down)!important}
-  .deny:hover{background:var(--down);color:#1a0606}
-  .empty{color:var(--faint);font-size:12.5px;text-align:center;padding:24px 12px}
+  /* ── WORKERS / THE FLOOR ─────────────────────────── */
+  .floor{padding:90px 20px 70px;max-width:1180px;margin:0 auto}
+  .floor h2,.pit h2,.ledger h2{font-size:clamp(30px,5vw,52px);font-weight:800;margin-bottom:8px}
+  .lead{color:var(--muted);max-width:620px;margin-bottom:40px;line-height:1.6}
+  .workers{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+  .worker{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px;position:relative;overflow:hidden}
+  .worker::before{content:"";position:absolute;inset:0 0 auto 0;height:3px;background:var(--clr)}
+  .worker[data-w="claude"]{--clr:var(--claude)} .worker[data-w="kimi"]{--clr:var(--kimi)} .worker[data-w="glm"]{--clr:var(--glm)}
+  .w-top{display:flex;align-items:center;gap:12px}
+  .ava{width:46px;height:46px;border-radius:12px;display:grid;place-items:center;background:var(--panel2);border:1px solid var(--line);color:var(--clr)}
+  .w-name{font-family:var(--disp);font-weight:700;font-size:17px}
+  .w-role{font-family:var(--mono);font-size:11px;color:var(--muted)}
+  .lvl{margin-left:auto;text-align:right}
+  .lvl .lv{font-family:var(--disp);font-weight:800;font-size:20px;color:var(--clr)}
+  .lvl .lk{font-family:var(--mono);font-size:9px;letter-spacing:.1em;color:var(--faint)}
+  .xp{margin:14px 0 16px}
+  .xp .bar > i{background:var(--clr)}
+  .xp .lab{display:flex;justify-content:space-between;font-family:var(--mono);font-size:10px;color:var(--faint);margin-bottom:5px}
+  .w-earn{font-family:var(--mono);font-size:30px;font-weight:600}
+  .w-earn.up{color:var(--up)} .w-earn.down{color:var(--down)}
+  .w-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:12px 0 14px}
+  .w-stats div{font-family:var(--mono);font-size:13px}
+  .w-stats .k{display:block;font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint)}
+  .grind{margin:4px 0 12px}
+  .grind .lab{font-family:var(--mono);font-size:10px;color:var(--faint);letter-spacing:.08em;margin-bottom:5px;display:flex;justify-content:space-between}
+  .grind .bar{height:6px} .grind .bar > i{background:linear-gradient(90deg,var(--clr),#fff3);width:30%}
+  .bark{font-family:var(--mono);font-size:12px;color:var(--clr);min-height:18px;
+    border-top:1px dashed var(--line);padding-top:11px}
+  .bark::before{content:"▸ "}
 
-  table{width:100%;border-collapse:collapse;font-size:12px}
-  th{font-size:9.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--faint);
-    text-align:right;padding:7px 10px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel)}
-  th:first-child,td:first-child{text-align:left}
-  td{padding:8px 10px;border-bottom:1px solid var(--line);font-family:var(--mono)}
-  tr:last-child td{border-bottom:none}
-  td .bkdot{display:inline-block;width:7px;height:7px;border-radius:2px;margin-right:6px;vertical-align:middle}
+  /* ── CONVEYOR ────────────────────────────────────── */
+  .conveyor-wrap{height:100vh;overflow:hidden;position:relative;background:linear-gradient(180deg,transparent,rgba(77,208,255,.04))}
+  .conveyor-inner{position:absolute;top:50%;transform:translateY(-50%);will-change:transform;display:flex;gap:18px;padding:0 8vw}
+  .conv-head{position:absolute;top:14vh;left:0;right:0;text-align:center}
+  .conv-head h2{font-size:clamp(26px,4vw,44px);font-weight:800}
+  .conv-head p{font-family:var(--mono);font-size:12px;color:var(--faint);letter-spacing:.2em;margin-top:8px}
+  .order{flex:0 0 270px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px}
+  .order .tk{font-family:var(--mono);font-size:11px;color:var(--faint)}
+  .order .ti{font-size:14px;margin:6px 0 16px;line-height:1.4;min-height:40px}
+  .order .row{display:flex;align-items:center;justify-content:space-between}
+  .order .pr{font-family:var(--mono);font-size:20px;font-weight:600}
+  .pill{font-family:var(--mono);font-size:11px;padding:2px 9px;border-radius:999px}
+  .pill.pos{color:var(--up);background:rgba(61,220,132,.12)} .pill.neg{color:var(--down);background:rgba(255,93,93,.12)}
+  .pill.flat{color:var(--faint);background:rgba(86,96,115,.14)}
 
-  @media (max-width:1100px){
-    main{grid-template-columns:1fr;grid-auto-rows:min-content}
-    .books{grid-template-rows:none}
-  }
+  /* ── PIT (approvals) ─────────────────────────────── */
+  .pit{padding:90px 20px;max-width:1180px;margin:0 auto}
+  .appr-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
+  .appr{background:var(--panel);border:1px solid rgba(255,183,77,.4);border-radius:14px;padding:16px;position:relative}
+  .appr .top{display:flex;justify-content:space-between;align-items:baseline}
+  .appr .who{font-family:var(--mono);font-size:11px;color:var(--muted)}
+  .appr .side{font-family:var(--mono);font-weight:600;font-size:12px;padding:1px 8px;border-radius:5px}
+  .side.yes{color:var(--up);background:rgba(61,220,132,.12)} .side.no{color:var(--down);background:rgba(255,93,93,.12)}
+  .appr .ti{font-size:14px;margin:8px 0}
+  .appr .why{font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:12px}
+  .appr .meta{display:flex;gap:14px;font-family:var(--mono);font-size:11px;color:var(--faint);margin-bottom:14px}
+  .appr .acts{display:flex;gap:9px}
+  .appr .acts button{flex:1;border:none;border-radius:9px;padding:11px;font-weight:700;font-size:13px;letter-spacing:.03em;transition:filter .15s,transform .08s}
+  .appr .acts button:active{transform:translateY(1px)}
+  .ship{background:var(--up);color:#052b13} .ship:hover{filter:brightness(1.1)}
+  .reject{background:var(--panel2);color:var(--down);border:1px solid var(--down)!important}
+  .reject:hover{background:var(--down);color:#1a0606}
+  .empty{grid-column:1/-1;text-align:center;color:var(--faint);font-family:var(--mono);padding:40px}
+
+  /* ── LEDGER / leaderboard ────────────────────────── */
+  .ledger{padding:90px 20px 120px;max-width:1180px;margin:0 auto}
+  .lb{display:grid;gap:12px}
+  .lb-row{display:grid;grid-template-columns:40px 1fr 130px;align-items:center;gap:16px;
+    background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 18px}
+  .lb-rank{font-family:var(--disp);font-weight:800;font-size:26px;color:var(--faint)}
+  .lb-row:first-child .lb-rank{color:var(--pending)}
+  .lb-name{font-family:var(--disp);font-weight:700;font-size:16px}
+  .lb-name small{display:block;font-family:var(--mono);font-size:11px;color:var(--muted);font-weight:400}
+  .lb-track{height:10px;margin-top:9px;border-radius:99px;background:var(--panel2);overflow:hidden;border:1px solid var(--line)}
+  .lb-track > i{display:block;height:100%;border-radius:99px}
+  .lb-pnl{font-family:var(--mono);font-size:20px;font-weight:600;text-align:right}
+
+  @media (max-width:900px){.workers{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
+<div class="scan" aria-hidden="true"></div>
 
-<header>
-  <span class="brand">
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="m7 14 4-4 3 3 5-6"/></svg>
-    Council <small>· Kalshi Mission Control</small>
-  </span>
-  <span class="mode" id="mode" data-live="false">PAPER</span>
+<div class="topbar">
+  <span class="logo"><b>◢</b> COUNCIL · THE FLOOR</span>
+  <span class="mode" id="mode">PAPER</span>
+  <span class="out">SHIFT OUTPUT <b class="num" id="out">$0.00</b></span>
+  <button class="stop" id="stop" aria-pressed="false" aria-label="Stop the line — halt all trading">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+    STOP THE LINE
+  </button>
+</div>
 
-  <div class="hud">
-    <div class="stat"><span class="k">Bankroll</span><span class="v num">$3,000</span></div>
-    <div class="stat"><span class="k">Total P&amp;L</span><span class="v num up" id="total-pnl">+$184.20</span></div>
-    <div class="stat"><span class="k">Today</span><span class="v num down" id="today-pnl">−$22.10</span></div>
-    <div class="stat"><span class="k">Open</span><span class="v num">7</span></div>
-    <button class="kill" id="kill" aria-pressed="false" aria-label="Engage kill switch — halt all trading">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.77.04"/></svg>
-      Kill switch
-    </button>
+<!-- HERO -->
+<section class="hero">
+  <div class="kicker">Now hiring · 3 models · no breaks</div>
+  <h1 id="title">THE FLOOR</h1>
+  <p class="sub">Three language models grind prediction markets around the clock. They draft theses, fight over edges, and beg the boss (you) to ship the trade. Paper money only — for now.</p>
+  <div class="gauges">
+    <div class="gauge"><div class="g-k">Shift clock</div><div class="g-v num" id="clock">00:00:00</div></div>
+    <div class="gauge"><div class="g-k">Orders churned</div><div class="g-v num" id="churned">0</div></div>
+    <div class="gauge"><div class="g-k">Edges found</div><div class="g-v num" id="edges">0</div></div>
   </div>
-</header>
-
-<main>
-  <!-- Watchlist -->
-  <section class="panel" aria-label="Market watchlist">
-    <h2>Watchlist <span class="num" style="color:var(--faint)">12</span></h2>
-    <div class="scroll" id="watchlist"></div>
-  </section>
-
-  <!-- Books -->
-  <section class="books" aria-label="Strategy books">
-    <article class="book" data-book="A">
-      <div class="left">
-        <div class="bk-head"><span class="badge">A</span><div><div class="name">News-driven</div><div class="strat">web search · event reaction</div></div></div>
-        <div class="pnl up num">+$96.40</div>
-        <div class="pnl-sub">$1,000 bankroll · since Jun 5</div>
-      </div>
-      <div class="metrics">
-        <div class="metric"><span class="k">Hit rate</span><div class="v">58%</div></div>
-        <div class="metric"><span class="k">Trades</span><div class="v">31</div></div>
-        <div class="metric"><span class="k">Open pos</span><div class="v">3</div></div>
-        <div class="metric"><span class="k">Fee drag</span><div class="v">$11.20</div></div>
-        <div class="calib">
-          <span class="metric" style="flex:1"><span class="k">Brier (you / mkt)</span><div class="v">0.19 / 0.23</div></span>
-          <span class="chip beat">BEATS MKT</span>
-        </div>
-      </div>
-    </article>
-
-    <article class="book" data-book="B">
-      <div class="left">
-        <div class="bk-head"><span class="badge">B</span><div><div class="name">Cross-source</div><div class="strat">polls · econ · futures divergence</div></div></div>
-        <div class="pnl up num">+$142.90</div>
-        <div class="pnl-sub">$1,000 bankroll · since Jun 5</div>
-      </div>
-      <div class="metrics">
-        <div class="metric"><span class="k">Hit rate</span><div class="v">63%</div></div>
-        <div class="metric"><span class="k">Trades</span><div class="v">24</div></div>
-        <div class="metric"><span class="k">Open pos</span><div class="v">2</div></div>
-        <div class="metric"><span class="k">Fee drag</span><div class="v">$8.05</div></div>
-        <div class="calib">
-          <span class="metric" style="flex:1"><span class="k">Brier (you / mkt)</span><div class="v">0.16 / 0.22</div></span>
-          <span class="chip beat">BEATS MKT</span>
-        </div>
-      </div>
-    </article>
-
-    <article class="book" data-book="C">
-      <div class="left">
-        <div class="bk-head"><span class="badge">C</span><div><div class="name">Calibrated reasoning</div><div class="strat">thin / illiquid markets</div></div></div>
-        <div class="pnl down num">−$55.10</div>
-        <div class="pnl-sub">$1,000 bankroll · since Jun 5</div>
-      </div>
-      <div class="metrics">
-        <div class="metric"><span class="k">Hit rate</span><div class="v">44%</div></div>
-        <div class="metric"><span class="k">Trades</span><div class="v">18</div></div>
-        <div class="metric"><span class="k">Open pos</span><div class="v">2</div></div>
-        <div class="metric"><span class="k">Fee drag</span><div class="v">$14.60</div></div>
-        <div class="calib">
-          <span class="metric" style="flex:1"><span class="k">Brier (you / mkt)</span><div class="v">0.27 / 0.25</div></span>
-          <span class="chip miss">TRAILS MKT</span>
-        </div>
-      </div>
-    </article>
-  </section>
-
-  <!-- Approvals + positions -->
-  <div class="right">
-    <section class="panel" aria-label="Approval queue" style="max-height:50vh">
-      <h2>Approval queue <span class="num" id="appr-count" style="color:var(--pending)">2</span></h2>
-      <div class="scroll" id="approvals"></div>
-    </section>
-
-    <section class="panel" aria-label="Open positions">
-      <h2>Open positions</h2>
-      <div class="scroll" style="padding:0">
-        <table>
-          <thead><tr><th>Market</th><th>Side</th><th>Qty</th><th>Entry</th><th>P&amp;L</th></tr></thead>
-          <tbody id="positions"></tbody>
-        </table>
-      </div>
-    </section>
+  <div class="quota">
+    <div class="lab"><span>DAILY QUOTA</span><span id="quota-n">0 / 40</span></div>
+    <div class="bar"><i id="quota-bar" style="width:0%"></i></div>
   </div>
-</main>
+  <div class="cue">SCROLL TO ENTER</div>
+</section>
+
+<!-- WORKERS -->
+<section class="floor">
+  <h2 class="disp">The workers</h2>
+  <p class="lead">Each model runs one book. They earn XP per resolved trade and level up when their calibration beats the market. Book C is having a rough shift.</p>
+  <div class="workers" id="workers"></div>
+</section>
+
+<!-- CONVEYOR -->
+<section class="conveyor-wrap" id="conveyor">
+  <div class="conv-head"><h2 class="disp">The order line</h2><p>MARKETS COMING DOWN THE BELT →</p></div>
+  <div class="conveyor-inner" id="belt"></div>
+</section>
+
+<!-- PIT -->
+<section class="pit">
+  <h2 class="disp">The approval pit</h2>
+  <p class="lead">The workers found edges. Nothing fills without your sign-off. <b style="color:var(--up)">Ship it</b> or <b style="color:var(--down)">reject</b>.</p>
+  <div class="appr-grid" id="approvals"></div>
+</section>
+
+<!-- LEDGER -->
+<section class="ledger">
+  <h2 class="disp">The leaderboard</h2>
+  <p class="lead">Ranked by realized P&amp;L after fees. Calibration (Brier vs market) decides who graduates toward real money.</p>
+  <div class="lb" id="leaderboard"></div>
+</section>
+
+<div class="ticker" aria-hidden="true"><div class="ticker-track" id="ticker"></div></div>
 
 <script>
 "use strict";
 const $=s=>document.querySelector(s);
-const fmt=n=>(n<0?"−$":"+$")+Math.abs(n).toFixed(2);
+const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const money=n=>(n<0?"−$":"$")+Math.abs(n).toFixed(2);
 
-const demo={
-  watchlist:[
-    {tk:"FED-DEC-CUT",ti:"Fed cuts rates in December?",price:.62,edge:+.23},
-    {tk:"CPI-NOV-HOT",ti:"November CPI above 3.2%?",price:.41,edge:-.21},
-    {tk:"GOVT-SHUTDOWN",ti:"US govt shutdown before year end?",price:.18,edge:+.02},
-    {tk:"GDP-Q4-2PCT",ti:"Q4 GDP above 2.0%?",price:.55,edge:+.09},
-    {tk:"JOBS-DEC-BEAT",ti:"December nonfarm payrolls beat consensus?",price:.48,edge:-.04},
-  ],
-  approvals:[
-    {id:"ap1",book:"B",bookName:"Cross-source",tk:"FED-DEC-CUT",ti:"Fed cuts rates in December?",
-     side:"yes",contracts:80,price:.62,pred:.85,edge:+.23,fee:1.32,
-     why:"Fed funds futures imply 84% vs the market's 62%. Three sources agree the market is underpricing a cut."},
-    {id:"ap2",book:"A",bookName:"News-driven",tk:"CPI-NOV-HOT",ti:"November CPI above 3.2%?",
-     side:"no",contracts:84,price:.59,pred:.22,edge:-.21,fee:1.21,
-     why:"Cooling shelter + energy prints since the market last repriced. Fresh data favors a soft CPI."},
-  ],
-  positions:[
-    {bk:"A",tk:"FED-DEC-CUT",side:"yes",qty:60,entry:.58,pnl:+4.10},
-    {bk:"B",tk:"GDP-Q4-2PCT",side:"yes",qty:70,entry:.51,pnl:+8.40},
-    {bk:"B",tk:"SENATE-BILL",side:"no",qty:40,entry:.33,pnl:-2.20},
-    {bk:"C",tk:"OSCARS-FILM-X",side:"yes",qty:25,entry:.44,pnl:-6.90},
-    {bk:"A",tk:"OPEC-CUT-JAN",side:"yes",qty:50,entry:.61,pnl:+1.30},
-  ],
-};
-const BK={A:"var(--A)",B:"var(--B)",C:"var(--C)"};
+const workers=[
+  {w:"claude",name:"Claude",role:"News desk · Book A",lv:7,xp:62,earn:96.40,trades:31,hit:"58%",pos:3,beat:true,
+   barks:["scanning the wire for Fed leaks…","found a 23¢ edge on FED-DEC-CUT!","drafting thesis…","boss is reviewing my order…","back to the grind."]},
+  {w:"kimi",name:"Kimi K2",role:"Cross-source · Book B",lv:9,xp:88,earn:142.90,trades:24,hit:"63%",pos:2,beat:true,
+   barks:["futures say 84%, market says 62%…","divergence! loading NO on CPI…","cross-checking three polls…","quota: 6/10 this shift","calibration looking clean."]},
+  {w:"glm",name:"GLM-5.2",role:"Reasoning · Book C",lv:4,xp:21,earn:-55.10,trades:18,hit:"44%",pos:2,beat:false,
+   barks:["thin market, low conviction…","took a loss on the Oscars market.","re-checking my base rates…","maybe I should sit this one out.","down bad. grinding anyway."]},
+];
+const orders=[
+  {tk:"FED-DEC-CUT",ti:"Fed cuts rates in December?",pr:.62,edge:+.23},
+  {tk:"CPI-NOV-HOT",ti:"November CPI above 3.2%?",pr:.41,edge:-.21},
+  {tk:"GDP-Q4-2PCT",ti:"Q4 GDP above 2.0%?",pr:.55,edge:+.09},
+  {tk:"GOVT-SHUTDOWN",ti:"Govt shutdown before year end?",pr:.18,edge:+.02},
+  {tk:"JOBS-DEC-BEAT",ti:"Dec payrolls beat consensus?",pr:.48,edge:-.04},
+  {tk:"OPEC-CUT-JAN",ti:"OPEC output cut in January?",pr:.61,edge:+.12},
+];
+const approvals=[
+  {id:"ap1",who:"Kimi K2 · B",tk:"FED-DEC-CUT",ti:"Fed cuts rates in December?",side:"yes",size:"80 @ 62¢",mp:"85% / 62%",fee:"$1.32",
+   why:"Fed funds futures imply 84% vs the market's 62%. Three sources agree it's underpriced."},
+  {id:"ap2",who:"Claude · A",tk:"CPI-NOV-HOT",ti:"November CPI above 3.2%?",side:"no",size:"84 @ 59¢",mp:"22% / 41%",fee:"$1.21",
+   why:"Cooling shelter and energy prints since the last repricing. Fresh data favors a soft CPI."},
+];
+const AVATAR=`<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 8V4M9 4h6"/><circle cx="9" cy="14" r="1.3" fill="currentColor"/><circle cx="15" cy="14" r="1.3" fill="currentColor"/></svg>`;
 
-function edgeChip(e){
-  const cls=e>=.05?"pos":e<=-.05?"neg":"flat";
-  const txt=(e>0?"+":"")+(e*100).toFixed(0)+"¢ edge";
-  return `<span class="edge ${cls}">${cls==="flat"?"no edge":txt}</span>`;
-}
-function renderWatchlist(){
-  $("#watchlist").innerHTML=demo.watchlist.map(m=>`
-    <button class="mkt">
-      <div class="tk">${m.tk}</div>
-      <div class="ti">${m.ti}</div>
-      <div class="row"><span class="price">${(m.price*100).toFixed(0)}¢</span>${edgeChip(m.edge)}</div>
-    </button>`).join("");
-}
+// ── render ────────────────────────────────────────────
+$("#workers").innerHTML=workers.map(w=>`
+  <article class="worker" data-w="${w.w}">
+    <div class="w-top">
+      <span class="ava">${AVATAR}</span>
+      <div><div class="w-name">${w.name}</div><div class="w-role">${w.role}</div></div>
+      <div class="lvl"><div class="lv">L${w.lv}</div><div class="lk">LEVEL</div></div>
+    </div>
+    <div class="xp"><div class="lab"><span>XP</span><span>${w.xp}/100</span></div><div class="bar"><i data-xp="${w.xp}" style="width:0%"></i></div></div>
+    <div class="w-earn ${w.earn>=0?'up':'down'} num" data-earn="${w.earn}">$0.00</div>
+    <div class="w-stats">
+      <div><span class="k">Trades</span>${w.trades}</div>
+      <div><span class="k">Hit</span>${w.hit}</div>
+      <div><span class="k">Open</span>${w.pos}</div>
+    </div>
+    <div class="grind"><div class="lab"><span>GRIND</span><span>${w.beat?'BEATS MKT':'TRAILS MKT'}</span></div><div class="bar"><i class="grind-bar"></i></div></div>
+    <div class="bark">on shift…</div>
+  </article>`).join("");
+
+$("#belt").innerHTML=orders.concat(orders).map(o=>{
+  const cls=o.edge>=.05?"pos":o.edge<=-.05?"neg":"flat";
+  const txt=cls==="flat"?"no edge":(o.edge>0?"+":"")+(o.edge*100).toFixed(0)+"¢";
+  return `<div class="order"><div class="tk">${o.tk}</div><div class="ti">${o.ti}</div>
+    <div class="row"><span class="pr">${(o.pr*100).toFixed(0)}¢</span><span class="pill ${cls}">${txt}</span></div></div>`;
+}).join("");
+
 function renderApprovals(){
   const box=$("#approvals");
-  if(!demo.approvals.length){box.innerHTML=`<div class="empty">No trades awaiting approval.<br>The council is watching the book.</div>`;}
-  else box.innerHTML=demo.approvals.map(a=>`
+  if(!approvals.length){box.innerHTML=`<div class="empty">PIT EMPTY — workers are still digging.</div>`;return;}
+  box.innerHTML=approvals.map(a=>`
     <div class="appr" data-id="${a.id}">
-      <div class="top">
-        <span class="tk"><span style="color:${BK[a.book]};font-weight:600">${a.book}</span> · ${a.tk}</span>
-        <span class="side ${a.side}">${a.side.toUpperCase()}</span>
-      </div>
-      <div class="ti">${a.ti}</div>
-      <div class="why">${a.why}</div>
-      <div class="grid">
-        <div><span class="lbl">Size</span>${a.contracts} @ ${(a.price*100).toFixed(0)}¢</div>
-        <div><span class="lbl">Model / mkt</span>${(a.pred*100).toFixed(0)}% / ${(a.price*100).toFixed(0)}%</div>
-        <div><span class="lbl">Est. fee</span>$${a.fee.toFixed(2)}</div>
-      </div>
-      <div class="acts">
-        <button class="ok" data-act="approve" aria-label="Approve ${a.tk}">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> Approve
-        </button>
-        <button class="deny" data-act="deny" aria-label="Deny ${a.tk}">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg> Deny
-        </button>
-      </div>
+      <div class="top"><span class="who">${a.who}</span><span class="side ${a.side}">${a.side.toUpperCase()}</span></div>
+      <div class="ti">${a.ti}</div><div class="why">${a.why}</div>
+      <div class="meta"><span>${a.size}</span><span>model/mkt ${a.mp}</span><span>fee ${a.fee}</span></div>
+      <div class="acts"><button class="ship" data-act="1">SHIP IT</button><button class="reject" data-act="0">REJECT</button></div>
     </div>`).join("");
-  $("#appr-count").textContent=demo.approvals.length;
 }
-function renderPositions(){
-  $("#positions").innerHTML=demo.positions.map(p=>`
-    <tr>
-      <td><span class="bkdot" style="background:${BK[p.bk]}"></span>${p.tk}</td>
-      <td style="color:${p.side==="yes"?"var(--up)":"var(--down)"}">${p.side.toUpperCase()}</td>
-      <td style="text-align:right">${p.qty}</td>
-      <td style="text-align:right">${(p.entry*100).toFixed(0)}¢</td>
-      <td style="text-align:right;color:${p.pnl>=0?"var(--up)":"var(--down)"}">${fmt(p.pnl)}</td>
-    </tr>`).join("");
+renderApprovals();
+
+const lbData=[...workers].sort((a,b)=>b.earn-a.earn);
+const maxAbs=Math.max(...lbData.map(w=>Math.abs(w.earn)));
+$("#leaderboard").innerHTML=lbData.map((w,i)=>`
+  <div class="lb-row">
+    <div class="lb-rank">${i+1}</div>
+    <div><div class="lb-name">${w.name}<small>${w.role}</small></div>
+      <div class="lb-track"><i style="width:0%;background:${w.earn>=0?'var(--up)':'var(--down)'}" data-w="${Math.round(Math.abs(w.earn)/maxAbs*100)}"></i></div></div>
+    <div class="lb-pnl" style="color:${w.earn>=0?'var(--up)':'var(--down)'}">${money(w.earn)}</div>
+  </div>`).join("");
+
+// ticker
+const tk=workers.flatMap(w=>[`<span>${w.name} <b class="${w.earn>=0?'up':'dn'}">${money(w.earn)}</b></span>`])
+  .concat(orders.map(o=>`<span>${o.tk} <b class="ed">${(o.pr*100).toFixed(0)}¢</b></span>`));
+$("#ticker").innerHTML=(tk.join("")).repeat(2);
+
+// ── count-up helper ───────────────────────────────────
+function countUp(el,to,prefix="$",dur=1.4){
+  if(reduce){el.textContent=(to<0?"−$":prefix)+Math.abs(to).toFixed(2);return;}
+  const o={v:0};
+  gsap.to(o,{v:to,duration:dur,ease:"power2.out",snap:{v:0.01},
+    onUpdate:()=>el.textContent=(o.v<0?"−$":prefix)+Math.abs(o.v).toFixed(2)});
 }
 
-// Approve / deny (client-side demo)
-$("#approvals").addEventListener("click",e=>{
-  const btn=e.target.closest("button[data-act]"); if(!btn)return;
-  const card=btn.closest(".appr"); const id=card.dataset.id;
-  demo.approvals=demo.approvals.filter(a=>a.id!==id);
-  renderApprovals();
+// ── GSAP ──────────────────────────────────────────────
+window.addEventListener("load",()=>{
+  if(!window.gsap){return;} // graceful: static page if CDN blocked
+  gsap.registerPlugin(ScrollTrigger);
+
+  // hero title: split into chars, stagger in
+  const t=$("#title"), txt=t.textContent.trim(); t.innerHTML="";
+  [...txt].forEach(c=>{const s=document.createElement("span");s.className="word";s.textContent=c===" "?" ":c;t.appendChild(s);});
+  if(!reduce) gsap.from("#title .word",{y:"110%",opacity:0,rotateX:-80,stagger:.05,duration:.9,ease:"back.out(1.7)"});
+
+  // hero gauges count up
+  countUp($("#out"),283.20+0); // placeholder shift output
+  let churned=0,edges=0;
+  if(reduce){$("#churned").textContent="73";$("#edges").textContent="19";$("#quota-n").textContent="29 / 40";$("#quota-bar").style.width="72%";}
+  else{
+    gsap.to({},{duration:1.6,onUpdate(){churned=Math.round(this.progress()*73);$("#churned").textContent=churned;}});
+    gsap.to({},{duration:1.6,onUpdate(){edges=Math.round(this.progress()*19);$("#edges").textContent=edges;}});
+    gsap.fromTo("#quota-bar",{width:"0%"},{width:"72%",duration:1.6,ease:"power2.out",
+      onUpdate(){$("#quota-n").textContent=Math.round(this.progress()*29)+" / 40";}});
+  }
+
+  // shift clock
+  const start=Date.now()-3*3600e3-12*60e3;
+  setInterval(()=>{const s=Math.floor((Date.now()-start)/1000),p=n=>String(n).padStart(2,"0");
+    $("#clock").textContent=`${p(s/3600|0)}:${p((s/60|0)%60)}:${p(s%60)}`;},1000);
+
+  // workers reveal + meters (scroll-triggered)
+  gsap.utils.toArray(".worker").forEach((card,i)=>{
+    ScrollTrigger.create({trigger:card,start:"top 82%",once:true,onEnter:()=>{
+      if(!reduce) gsap.from(card,{y:60,opacity:0,duration:.7,ease:"power3.out",delay:i*.08});
+      const w=workers[i];
+      countUp(card.querySelector(".w-earn"),w.earn);
+      const xp=card.querySelector("[data-xp]");
+      gsap.to(xp,{width:xp.dataset.xp+"%",duration:1.1,ease:"power2.out",delay:.15});
+    }});
+    // grind bar: perpetual back-and-forth (the daily grind)
+    if(!reduce) gsap.to(card.querySelector(".grind-bar"),{width:"95%",duration:1.1+i*.3,repeat:-1,yoyo:true,ease:"sine.inOut"});
+  });
+
+  // worker barks cycle
+  workers.forEach((w,i)=>{
+    const el=document.querySelectorAll(".bark")[i];let k=0;
+    el.textContent=w.barks[0];
+    setInterval(()=>{k=(k+1)%w.barks.length;
+      if(reduce){el.textContent=w.barks[k];return;}
+      gsap.to(el,{opacity:0,duration:.25,onComplete:()=>{el.textContent=w.barks[k];gsap.to(el,{opacity:1,duration:.25});}});
+    },2600+i*700);
+  });
+
+  // CONVEYOR: pin + scrub horizontal belt
+  const belt=$("#belt");
+  if(!reduce){
+    gsap.to(belt,{x:()=>-(belt.scrollWidth-innerWidth*.84),ease:"none",
+      scrollTrigger:{trigger:"#conveyor",start:"top top",end:()=>"+="+(belt.scrollWidth*.9),pin:true,scrub:1}});
+  }
+
+  // PIT cards stagger
+  if(!reduce) gsap.from(".appr",{scrollTrigger:{trigger:".pit",start:"top 75%"},y:50,opacity:0,stagger:.12,duration:.6,ease:"power2.out"});
+
+  // leaderboard bars fill on reveal
+  gsap.utils.toArray(".lb-track > i").forEach(bar=>{
+    ScrollTrigger.create({trigger:bar,start:"top 88%",once:true,onEnter:()=>
+      gsap.to(bar,{width:bar.dataset.w+"%",duration:1,ease:"power2.out"})});
+  });
+
+  // ticker marquee
+  if(!reduce) gsap.to("#ticker",{xPercent:-50,duration:34,ease:"none",repeat:-1});
 });
 
-// Kill switch
-$("#kill").addEventListener("click",e=>{
-  const b=e.currentTarget, on=b.getAttribute("aria-pressed")!=="true";
+// interactions
+$("#approvals").addEventListener("click",e=>{
+  const btn=e.target.closest("button[data-act]");if(!btn)return;
+  const card=btn.closest(".appr"),id=card.dataset.id,shipped=btn.dataset.act==="1";
+  const idx=approvals.findIndex(a=>a.id===id);if(idx>-1)approvals.splice(idx,1);
+  if(window.gsap&&!reduce){
+    gsap.to(card,{scale:.92,opacity:0,y:shipped?-20:20,duration:.35,ease:"power2.in",onComplete:renderApprovals});
+    if(shipped){const cur=parseFloat($("#out").textContent.replace(/[^0-9.]/g,""))||0;countUp($("#out"),cur+ (Math.random()*40+10),"$",.8);}
+  } else renderApprovals();
+});
+$("#stop").addEventListener("click",e=>{
+  const b=e.currentTarget,on=b.getAttribute("aria-pressed")!=="true";
   b.setAttribute("aria-pressed",String(on));
   $("#mode").textContent=on?"HALTED":"PAPER";
-  $("#mode").style.borderColor=on?"var(--down)":"";
-  $("#mode").style.color=on?"var(--down)":"";
+  $("#mode").style.cssText=on?"border-color:var(--down);color:var(--down);background:rgba(255,93,93,.1)":"";
+  if(window.gsap)gsap.to(".worker .grind-bar",{width:on?"3%":"60%",duration:.4});
+  document.querySelectorAll(".bark").forEach((el,i)=>el.textContent=on?"line stopped. taking a breath.":workers[i].barks[0]);
 });
-
-renderWatchlist(); renderApprovals(); renderPositions();
 </script>
 </body>
 </html>
