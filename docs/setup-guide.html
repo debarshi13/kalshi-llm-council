@@ -3,137 +3,153 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Council — Setup Guide (things you need to do)</title>
+<title>Council · Setup Guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   :root{
-    --bg:#0d1017; --panel:#151a23; --panel2:#1c232f; --line:#273140;
-    --ink:#e6edf3; --muted:#8a97a8; --accent:#51d6ff; --ok:#5ce08a;
-    --warn:#fbbf24; --danger:#f87171; --radius:12px;
+    --bg:#070a0f;--panel:#10151e;--panel2:#141b26;--line:#222c3a;--line2:#30506a;
+    --ink:#eaf0f7;--muted:#8593a8;--faint:#566073;
+    --accent:#4dd0ff;--up:#3ddc84;--down:#ff5d5d;--pending:#ffb74d;
+    --mono:"IBM Plex Mono",ui-monospace,monospace;--disp:"Bricolage Grotesque",ui-sans-serif,system-ui,sans-serif;
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);
-    font:15px/1.65 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
-    max-width:880px;margin:0 auto;padding:32px 20px 80px}
-  h1,h2{font-family:Georgia,"Iowan Old Style","Times New Roman",serif;letter-spacing:-.01em}
-  h1{font-size:28px;margin:0 0 4px}
-  h1 small{font-family:ui-sans-serif,system-ui,sans-serif;color:var(--muted);font-weight:400;font-size:15px;display:block;margin-top:6px}
-  h2{font-size:21px;margin:34px 0 12px;padding-bottom:6px;border-bottom:1px solid var(--line)}
-  h2 .tag{font-size:12px;padding:2px 9px;border-radius:999px;vertical-align:middle;margin-left:8px;font-weight:600}
-  .rec{background:rgba(92,224,138,.14);color:var(--ok)}
-  .alt{background:rgba(251,191,36,.14);color:var(--warn)}
-  .req{background:rgba(81,214,255,.14);color:var(--accent)}
-  code,kbd{font-family:ui-monospace,"JetBrains Mono",monospace;font-size:.9em}
-  code{background:var(--panel2);border:1px solid var(--line);border-radius:5px;padding:1px 6px}
-  pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;overflow:auto}
-  pre code{background:none;border:none;padding:0}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:18px 20px;margin:14px 0}
-  ol{padding-left:22px} li{margin:7px 0}
-  .callout{border:1px solid rgba(251,191,36,.40);background:rgba(251,191,36,.06);
-    padding:12px 15px;border-radius:8px;margin:14px 0}
-  .callout.danger{border-color:rgba(248,113,113,.45);background:rgba(248,113,113,.07)}
-  .callout.ok{border-color:rgba(92,224,138,.40);background:rgba(92,224,138,.06)}
-  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:14px}
-  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
-  th{background:var(--panel2);color:var(--muted);font-weight:600}
+    font:15px/1.65 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+  .wrap{max-width:860px;margin:0 auto;padding:40px 22px 90px}
   a{color:var(--accent)}
-  .step{color:var(--muted);font-size:13px;text-transform:uppercase;letter-spacing:.05em}
+  code{font-family:var(--mono);font-size:.88em;background:var(--panel2);border:1px solid var(--line);border-radius:5px;padding:1px 6px}
+  pre{background:#05080c;border:1px solid var(--line);border-radius:10px;padding:15px;overflow:auto;margin:13px 0}
+  pre code{background:none;border:none;padding:0;font-size:13px;line-height:1.6}
+
+  header{display:flex;align-items:center;gap:11px;margin-bottom:6px}
+  .logo{font-family:var(--disp);font-weight:800;font-size:22px;letter-spacing:-.01em;display:flex;align-items:center;gap:9px}
+  .logo b{color:var(--accent)}
+  .sub{color:var(--muted);font-size:14px;margin:0 0 28px}
+  h2{font-family:var(--disp);font-weight:700;font-size:23px;letter-spacing:-.01em;margin:38px 0 6px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .tag{font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.06em;padding:3px 9px;border-radius:999px}
+  .rec{color:var(--up);background:rgba(61,220,132,.12)}
+  .opt{color:var(--pending);background:rgba(255,183,77,.12)}
+  .req{color:var(--accent);background:rgba(77,208,255,.12)}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px 22px;margin:14px 0}
+  .callout{border:1px solid rgba(255,183,77,.4);background:rgba(255,183,77,.06);border-radius:12px;padding:14px 16px;margin:16px 0}
+  .callout.danger{border-color:rgba(255,93,93,.45);background:rgba(255,93,93,.07)}
+  .callout.ok{border-color:rgba(61,220,132,.4);background:rgba(61,220,132,.06)}
+  .callout strong{font-family:var(--disp)}
+
+  ol{padding-left:0;list-style:none;counter-reset:s;margin:6px 0 0}
+  ol li{counter-increment:s;position:relative;padding:9px 0 9px 42px;border-bottom:1px solid var(--line)}
+  ol li:last-child{border-bottom:none}
+  ol li::before{content:counter(s);position:absolute;left:0;top:9px;width:26px;height:26px;
+    font-family:var(--mono);font-size:13px;font-weight:600;color:var(--accent);
+    background:var(--panel2);border:1px solid var(--line2);border-radius:8px;display:grid;place-items:center}
+  ol li b{color:var(--ink)}
+
+  table{border-collapse:collapse;width:100%;margin:6px 0;font-size:14px}
+  th,td{border-bottom:1px solid var(--line);padding:9px 11px;text-align:left;vertical-align:top}
+  th{font-family:var(--mono);font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--faint);font-weight:600}
+  td code{white-space:nowrap}
+  .chk{list-style:none;padding:0;margin:6px 0 0}
+  .chk li{display:flex;gap:11px;align-items:flex-start;padding:7px 0}
+  .chk svg{flex:0 0 auto;color:var(--up);margin-top:3px}
 </style>
 </head>
 <body>
+<div class="wrap">
+  <header><span class="logo"><b>◢</b> COUNCIL</span></header>
+  <p class="sub">Setup Guide: the manual, human-only steps. Everything else runs in code. Updated 2026-06-19.</p>
 
-<h1>Council — Setup Guide
-  <small>The manual, human-only steps. Everything else I (Claude) do in code. Last updated 2026-06-19.</small>
-</h1>
-
-<div class="callout">
-  <strong>Read first; the profit-margin reality.</strong> Profit = <em>trading edge</em> − (Kalshi fees + model cost).
-  Self-hosting GLM/Kimi only changes the cost term, and at this project's scale it makes cost
-  <em>worse</em>, not better (a rented GPU fleet only beats API pricing past ~240M tokens/day; a trading
-  council runs far below that). <strong>Start with Path A.</strong> Path B is here only because you asked;
-  treat it as an experiment, not a profit lever.
-</div>
-
-<h2>Path A — Hosted APIs via OpenRouter <span class="tag rec">RECOMMENDED</span></h2>
-<div class="card">
-  <p>One account, one key, all three models (Claude + Kimi K2 + GLM-5.2), unified billing. ~15 minutes.</p>
-  <ol>
-    <li><span class="step">1 · account</span> Sign up at <a href="https://openrouter.ai" target="_blank" rel="noopener">openrouter.ai</a>.</li>
-    <li><span class="step">2 · credit</span> Add a small prepaid balance (e.g. <strong>$20</strong>) under <em>Settings → Credits</em>. This is your hard ceiling; you can't be billed past it.</li>
-    <li><span class="step">3 · key</span> <em>Keys → Create Key</em>. Copy the <code>sk-or-...</code> value (shown once).</li>
-    <li><span class="step">4 · paste</span> Put it in <code>~/council/.env</code> as <code>OPENROUTER_API_KEY=sk-or-...</code> (see the <a href="#env">.env table</a> below).</li>
-    <li><span class="step">5 · verify model slugs</span> On the OpenRouter <em>Models</em> page, confirm the exact slugs for Claude, Kimi K2, and GLM-5.2, and tell me; I'll set them in <code>config.yaml</code> (my current values are placeholders).</li>
-  </ol>
-  <div class="callout ok"><strong>That's the whole setup for going live.</strong> Then I run <code>python scripts/check_connectivity.py</code> and we're connected.</div>
-</div>
-
-<h2>Path B — Self-host GLM-5.2 on a rented GPU <span class="tag alt">OPTIONAL · ADVANCED</span></h2>
-<div class="card">
-  <div class="callout danger">
-    <strong>Honest cost warning.</strong> A production GLM-5.2 (744B MoE) needs a multi-GPU box (≈ several H100/H200).
-    On-demand that's <strong>~$12–30k/month if left running</strong>, and cold-starting on demand means loading
-    hundreds of GB of weights before the first token. This will <em>not</em> lower your trading costs at realistic
-    volume. Do this only for privacy/experimentation. <strong>Kimi K2 (1T params) is impractical to self-host —
-    keep Kimi on its hosted API even if you self-host GLM.</strong>
+  <div class="callout">
+    <strong>Read first: the profit-margin reality.</strong><br>
+    Profit = <em>trading edge</em> minus (Kalshi fees + model cost). Self-hosting the models only touches the
+    cost term, and at this project's scale it makes cost <em>worse</em>, not better: a rented GPU fleet only
+    beats API pricing past roughly 240M tokens/day, far above what a trading council uses.
+    <strong>Start with Path A.</strong> Path B exists only because you asked; treat it as an experiment.
   </div>
-  <ol>
-    <li><span class="step">1 · rent</span> Create an account on a GPU marketplace; <a href="https://simplepod.ai/pricing" target="_blank" rel="noopener">SimplePod</a>, Vast.ai, or RunPod. Rent a box with enough total VRAM for GLM-5.2 at FP8/INT4 (check the model card; expect multi-GPU). <strong>Enable persistent storage</strong> so you don't re-download weights every restart.</li>
-    <li><span class="step">2 · serve</span> On the box, serve the model with an OpenAI-compatible endpoint (vLLM):
-      <pre><code>pip install vllm
+
+  <h2>Path A · Hosted APIs via OpenRouter <span class="tag rec">RECOMMENDED</span></h2>
+  <div class="card">
+    <p style="margin-top:0">One account, one key, all three models (Claude + Kimi K2 + GLM-5.2), unified billing. About 15 minutes.</p>
+    <ol>
+      <li>Sign up at <a href="https://openrouter.ai" target="_blank" rel="noopener">openrouter.ai</a>.</li>
+      <li>Add a small prepaid balance (e.g. <b>$20</b>) under <em>Settings → Credits</em>. This is your hard ceiling; you can't be billed past it.</li>
+      <li><em>Keys → Create Key</em>, then copy the <code>sk-or-...</code> value (shown once).</li>
+      <li>Put it in <code>~/council/.env</code> as <code>OPENROUTER_API_KEY=sk-or-...</code> (see the <a href="#env">.env table</a>).</li>
+      <li>On the OpenRouter <em>Models</em> page, confirm the exact slugs for Claude, Kimi K2, and GLM-5.2 and tell me; I'll set them in <code>config.yaml</code> (mine are placeholders).</li>
+    </ol>
+    <div class="callout ok" style="margin-bottom:0"><strong>That's the whole setup for going live.</strong> Then I run <code>python scripts/check_connectivity.py</code> to confirm the models respond.</div>
+  </div>
+
+  <h2>Path B · Self-host GLM-5.2 on a rented GPU <span class="tag opt">OPTIONAL · ADVANCED</span></h2>
+  <div class="card">
+    <div class="callout danger" style="margin-top:0">
+      <strong>Honest cost warning.</strong><br>
+      A production GLM-5.2 (744B MoE) needs a multi-GPU box (several H100/H200). On-demand that's roughly
+      <b>$12k–30k/month if left running</b>, and a cold start loads hundreds of GB of weights before the first token.
+      This will not lower your trading costs at realistic volume. <b>Kimi K2 (1T params) is impractical to self-host;
+      keep Kimi on its hosted API even if you self-host GLM.</b>
+    </div>
+    <ol>
+      <li>Rent a box on a GPU marketplace (<a href="https://simplepod.ai/pricing" target="_blank" rel="noopener">SimplePod</a>, Vast.ai, or RunPod) with enough total VRAM for GLM-5.2 at FP8/INT4. <b>Enable persistent storage</b> so weights don't re-download on every restart.</li>
+      <li>Serve it with an OpenAI-compatible endpoint (vLLM):
+        <pre><code>pip install vllm
 vllm serve zai-org/GLM-5.2 \
   --tensor-parallel-size &lt;#GPUs&gt; \
   --api-key "choose-a-secret" \
   --port 8000</code></pre>
-      (Exact HF repo id + flags come from the GLM-5.2 model card; verify before running.)
-    </li>
-    <li><span class="step">3 · expose</span> Get the box's public URL (e.g. <code>https://&lt;host&gt;:8000/v1</code>). Keep it firewalled to your IP.</li>
-    <li><span class="step">4 · tell me</span> Send me the <strong>base URL</strong> and the <strong>secret</strong> you chose. I point LiteLLM at it in <code>config.yaml</code>; the reviewer role becomes <code>openai/GLM-5.2</code> with <code>api_base=&lt;your URL&gt;</code>. No other code changes (that's the whole point of the LiteLLM seam).</li>
-  </ol>
-  <div class="callout"><strong>Never paste the GPU box's root SSH key or cloud-account credentials to me.</strong> I only need the inference endpoint URL + its API secret.</div>
-</div>
+        (Exact HF repo id + flags come from the GLM-5.2 model card; verify before running.)
+      </li>
+      <li>Get the box's public URL (e.g. <code>https://&lt;host&gt;:8000/v1</code>) and keep it firewalled to your IP.</li>
+      <li>Send me the <b>base URL</b> and the <b>secret</b>. I point LiteLLM at it in <code>config.yaml</code>; the reviewer role becomes <code>openai/GLM-5.2</code> with <code>api_base</code> set. No other code changes; that's the point of the LiteLLM seam.</li>
+    </ol>
+    <div class="callout" style="margin-bottom:0"><strong>Never paste the GPU box's SSH key or cloud-account credentials to me.</strong> I only need the inference endpoint URL and its API secret.</div>
+  </div>
 
-<h2>Kalshi account &amp; API <span class="tag req">REQUIRED FOR TRADING</span></h2>
-<div class="card">
-  <p>Needed even in <strong>paper mode</strong>; the council reads <em>live</em> Kalshi prices to make realistic simulated decisions. No real orders are placed until you explicitly flip to live.</p>
-  <ol>
-    <li><span class="step">1 · account</span> Create and verify a <a href="https://kalshi.com" target="_blank" rel="noopener">Kalshi</a> account (KYC required; US-regulated exchange).</li>
-    <li><span class="step">2 · api access</span> In account settings, generate <strong>API credentials</strong> (Kalshi uses an API key ID + an RSA private key for request signing). Download the private key file; it's shown once.</li>
-    <li><span class="step">3 · read-only first</span> For paper mode we only use <em>read</em> endpoints (markets, prices, order book). Do <strong>not</strong> fund the account yet.</li>
-    <li><span class="step">4 · paste</span> Put the key ID + the path to the private key file in <code>~/council/.env</code> (table below). Keep the private key file <code>chmod 600</code> and outside git.</li>
-    <li><span class="step">5 · (later, live only)</span> Only when paper results justify it: fund with an amount you can afford to lose entirely, and we enable the guarded execution layer with hard caps + a kill switch.</li>
-  </ol>
-  <div class="callout">Check Kalshi's terms on <strong>automated/algorithmic trading</strong> before going live; confirm bots are permitted on your account type.</div>
-</div>
+  <h2>Kalshi account &amp; API <span class="tag req">REQUIRED FOR TRADING</span></h2>
+  <div class="card">
+    <p style="margin-top:0">Needed even in <b>paper mode</b>: the council reads <em>live</em> Kalshi prices to make realistic simulated decisions. No real orders are placed until you explicitly flip to live.</p>
+    <ol>
+      <li>Create and verify a <a href="https://kalshi.com" target="_blank" rel="noopener">Kalshi</a> account (KYC required; US-regulated exchange).</li>
+      <li>Generate <b>API credentials</b> (Kalshi uses an API key ID + an RSA private key for request signing). Download the private key file; it's shown once.</li>
+      <li>For paper mode we only call <em>read</em> endpoints (markets, prices, order book). Do <b>not</b> fund the account yet.</li>
+      <li>Put the key ID + the path to the private key file in <code>~/council/.env</code>. Keep the key file <code>chmod 600</code> and outside git.</li>
+      <li>(Live only, later) Only once paper results justify it: fund with an amount you can afford to lose, and we enable the guarded execution layer with hard caps + a kill switch.</li>
+    </ol>
+    <div class="callout" style="margin-bottom:0">Check Kalshi's terms on <b>automated/algorithmic trading</b> before going live; confirm bots are permitted on your account type.</div>
+  </div>
 
-<h2 id="env">What goes in <code>~/council/.env</code></h2>
-<div class="card">
-<table>
-  <tr><th>Variable</th><th>Path</th><th>Needed for</th></tr>
-  <tr><td><code>OPENROUTER_API_KEY</code></td><td>A (recommended)</td><td>all three models, one key</td></tr>
-  <tr><td><code>ANTHROPIC_API_KEY</code> / <code>MOONSHOT_API_KEY</code> / <code>ZHIPUAI_API_KEY</code></td><td>A (alt)</td><td>per-provider instead of OpenRouter</td></tr>
-  <tr><td><code>GLM_API_BASE</code> + <code>GLM_API_KEY</code></td><td>B (self-host)</td><td>your vLLM endpoint</td></tr>
-  <tr><td><code>KALSHI_API_KEY_ID</code></td><td>Kalshi</td><td>request signing</td></tr>
-  <tr><td><code>KALSHI_PRIVATE_KEY_PATH</code></td><td>Kalshi</td><td>path to your RSA key file</td></tr>
-  <tr><td><code>COUNCIL_BUDGET_USD</code></td><td>always</td><td>per-run model spend cap</td></tr>
-  <tr><td><code>COUNCIL_MODE</code></td><td>always</td><td><code>paper</code> (default) or <code>live</code></td></tr>
-</table>
-<pre><code># ~/council/.env ; never commit this file (it's gitignored)
+  <h2 id="env">What goes in <code>~/council/.env</code></h2>
+  <div class="card">
+    <table>
+      <tr><th>Variable</th><th>Path</th><th>Used for</th></tr>
+      <tr><td><code>OPENROUTER_API_KEY</code></td><td>A (recommended)</td><td>all three models, one key</td></tr>
+      <tr><td><code>ANTHROPIC_API_KEY</code> · <code>MOONSHOT_API_KEY</code> · <code>ZHIPUAI_API_KEY</code></td><td>A (alt)</td><td>per-provider instead of OpenRouter</td></tr>
+      <tr><td><code>GLM_API_BASE</code> + <code>GLM_API_KEY</code></td><td>B (self-host)</td><td>your vLLM endpoint</td></tr>
+      <tr><td><code>KALSHI_API_KEY_ID</code></td><td>Kalshi</td><td>request signing</td></tr>
+      <tr><td><code>KALSHI_PRIVATE_KEY_PATH</code></td><td>Kalshi</td><td>path to your RSA key file</td></tr>
+      <tr><td><code>COUNCIL_BUDGET_USD</code></td><td>always</td><td>per-run model spend cap</td></tr>
+      <tr><td><code>COUNCIL_MODE</code></td><td>always</td><td><code>paper</code> (default) or <code>live</code></td></tr>
+    </table>
+    <pre><code># ~/council/.env  (gitignored, never commit)
 OPENROUTER_API_KEY=sk-or-...
 KALSHI_API_KEY_ID=...
 KALSHI_PRIVATE_KEY_PATH=/home/debarshi/.secrets/kalshi.pem
 COUNCIL_BUDGET_USD=2.00
 COUNCIL_MODE=paper</code></pre>
-</div>
+  </div>
 
-<h2>Safety checklist before anything touches real money</h2>
-<div class="card">
-  <ol>
-    <li>Weeks of <strong>paper-mode</strong> P&amp;L showing a real, fee-aware edge; not a few lucky days.</li>
-    <li>Hard caps wired: max position size, max daily loss, total bankroll cap, kill switch.</li>
-    <li>Human approval gate on every live order (at least at first).</li>
-    <li>Keys stored as files with <code>chmod 600</code>, never pasted into chat, never committed.</li>
-    <li>Your machine's <a href="#">overnight-suspend issue</a> resolved or accounted for; a trading loop must not die mid-position.</li>
-  </ol>
+  <h2>Before real money touches the floor</h2>
+  <div class="card">
+    <ul class="chk">
+      <li><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Weeks of <b>paper-mode</b> P&amp;L showing a real, fee-aware edge, not a few lucky days.</li>
+      <li><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Hard caps wired: max position size, daily-loss halt, total bankroll cap, kill switch.</li>
+      <li><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Human approval on every live order, at least at first.</li>
+      <li><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Keys stored as <code>chmod 600</code> files, never pasted into chat, never committed.</li>
+      <li><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> The overnight-suspend issue on this machine resolved; a trading loop must not die mid-position.</li>
+    </ul>
+  </div>
 </div>
-
 </body>
 </html>
