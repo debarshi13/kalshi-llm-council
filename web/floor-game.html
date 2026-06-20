@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>The Floor — Council Trading Sim</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#070a0f;--panel:#10151e;--line:#222c3a;--ink:#eaf0f7;--muted:#8593a8;--faint:#566073;
+    --accent:#4dd0ff;--up:#3ddc84;--down:#ff5d5d;--pending:#ffb74d;
+    --mono:"IBM Plex Mono",ui-monospace,monospace;--disp:"Bricolage Grotesque",ui-sans-serif,system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 ui-sans-serif,system-ui,sans-serif;
+    min-height:100vh;display:flex;flex-direction:column;align-items:center}
+  .num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  button{font:inherit;cursor:pointer}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+  .wrap{width:100%;max-width:1040px;padding:14px}
+  header{display:flex;align-items:center;gap:14px;margin-bottom:10px;flex-wrap:wrap}
+  .logo{font-family:var(--disp);font-weight:800;font-size:21px;letter-spacing:-.01em;display:flex;align-items:center;gap:9px}
+  .logo b{color:var(--accent)}
+  .mode{font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.12em;padding:3px 9px;border-radius:999px;
+    border:1px solid var(--pending);color:var(--pending);background:rgba(255,183,77,.08)}
+  .out{margin-left:auto;font-family:var(--mono);font-size:13px;color:var(--muted)}
+  .out b{color:var(--up);font-size:16px}
+  .stop{display:flex;align-items:center;gap:7px;background:var(--down);color:#1a0606;border:none;border-radius:8px;
+    padding:8px 13px;font-weight:700;font-size:12.5px;letter-spacing:.03em}
+  .stop[aria-pressed="true"]{background:#2a0d0d;color:var(--down);border:1px solid var(--down)}
+
+  .stage{position:relative;width:100%}
+  canvas{width:100%;aspect-ratio:1000/620;display:block;border:1px solid var(--line);border-radius:14px;background:#0b0f16}
+
+  /* worker stat tooltip */
+  .tip{position:absolute;z-index:5;display:none;background:rgba(8,12,18,.96);border:1px solid var(--line);
+    border-radius:10px;padding:10px 12px;min-width:160px;pointer-events:none;box-shadow:0 10px 30px rgba(0,0,0,.5)}
+  .tip .nm{font-family:var(--disp);font-weight:700;font-size:14px}
+  .tip .rl{font-family:var(--mono);font-size:10.5px;color:var(--muted);margin-bottom:7px}
+  .tip .r{display:flex;justify-content:space-between;font-family:var(--mono);font-size:12px;margin:2px 0}
+  .tip .r span:first-child{color:var(--faint)}
+
+  /* approvals dock */
+  .dock{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
+  .pit-empty{grid-column:1/-1;text-align:center;color:var(--faint);font-family:var(--mono);font-size:12.5px;
+    padding:16px;border:1px dashed var(--line);border-radius:10px}
+  .ticket{background:var(--panel);border:1px solid rgba(255,183,77,.4);border-radius:11px;padding:12px 13px}
+  .ticket .top{display:flex;justify-content:space-between;align-items:baseline}
+  .ticket .who{font-family:var(--mono);font-size:11px;color:var(--muted)}
+  .ticket .side{font-family:var(--mono);font-weight:600;font-size:11px;padding:1px 7px;border-radius:5px}
+  .side.yes{color:var(--up);background:rgba(61,220,132,.12)} .side.no{color:var(--down);background:rgba(255,93,93,.12)}
+  .ticket .ti{font-size:13px;margin:6px 0 4px}
+  .ticket .meta{font-family:var(--mono);font-size:11px;color:var(--faint);margin-bottom:10px}
+  .ticket .acts{display:flex;gap:8px}
+  .ticket .acts button{flex:1;border:none;border-radius:8px;padding:8px;font-weight:700;font-size:12px}
+  .ship{background:var(--up);color:#052b13} .reject{background:#141b26;color:var(--down);border:1px solid var(--down)!important}
+
+  .hint{margin-top:10px;font-family:var(--mono);font-size:11.5px;color:var(--faint);text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="logo"><b>◢</b> THE FLOOR</span>
+    <span class="mode" id="mode">PAPER</span>
+    <span class="out">SHIFT OUTPUT <b class="num" id="out">$0.00</b></span>
+    <button class="stop" id="stop" aria-pressed="false">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+      STOP THE LINE
+    </button>
+  </header>
+
+  <div class="stage">
+    <canvas id="game" width="1000" height="620" aria-label="Trading floor simulation: three model workers move between desks doing tasks"></canvas>
+    <div class="tip" id="tip"></div>
+  </div>
+
+  <div class="dock" id="dock"></div>
+  <div class="hint">Click a worker for stats · approve their trades below · STOP THE LINE freezes the floor</div>
+</div>
+
+<script>
+"use strict";
+const W=1000,H=620,CY=312;
+const cvs=document.getElementById("game"),ctx=cvs.getContext("2d");
+const DPR=Math.min(window.devicePixelRatio||1,2);
+cvs.width=W*DPR;cvs.height=H*DPR;ctx.scale(DPR,DPR);
+const rnd=(a,b)=>a+Math.random()*(b-a);
+
+// ── stations: desk rect + stand-spot (sx,sy) in the open aisle ──
+const ST={
+  research:{label:"RESEARCH LAB",  desk:[70,70,230,90],  sx:185,sy:210, c:"#4dd0ff"},
+  analysis:{label:"ANALYSIS BAY",  desk:[700,70,230,90], sx:815,sy:210, c:"#3ddc84"},
+  risk:    {label:"RISK OFFICE",   desk:[70,460,230,90], sx:185,sy:430, c:"#ff5d5d"},
+  pit:     {label:"THE PIT",       desk:[700,460,230,90],sx:815,sy:430, c:"#ffb74d"},
+  cooler:  {label:"BREAK ROOM",    desk:[455,275,90,72], sx:500,sy:392, c:"#8593a8"},
+};
+
+const WORKERS=[
+  {key:"claude",name:"Claude",role:"News desk · Book A",col:"#ff9d5c",lv:7,pnl:96.40,trades:31,hit:58,edgeP:.55},
+  {key:"kimi",  name:"Kimi K2",role:"Cross-source · Book B",col:"#7cc6ff",lv:9,pnl:142.90,trades:24,hit:63,edgeP:.62},
+  {key:"glm",   name:"GLM-5.2",role:"Reasoning · Book C",col:"#b794ff",lv:4,pnl:-55.10,trades:18,hit:38,edgeP:.34},
+];
+const MKTS=[
+  {tk:"FED-DEC-CUT",ti:"Fed cuts in December?",p:62},
+  {tk:"CPI-NOV-HOT",ti:"Nov CPI above 3.2%?",p:41},
+  {tk:"GDP-Q4-2PCT",ti:"Q4 GDP above 2.0%?",p:55},
+  {tk:"OPEC-CUT-JAN",ti:"OPEC cut in January?",p:61},
+  {tk:"JOBS-DEC-BEAT",ti:"Dec payrolls beat?",p:48},
+];
+
+let frozen=false, output=0, tickets=[], tid=0, selected=null;
+
+// init workers at the break room, staggered
+WORKERS.forEach((w,i)=>{
+  w.x=480+i*22; w.y=400; w.dir=1; w.walk=0; w.path=[];
+  w.fsm="rest"; w.timer=0.6+i*1.2; w.dur=w.timer; w.sayText=""; w.sayT=0; w.bob=Math.random()*6;
+});
+
+function say(w,t){w.sayText=t;w.sayT=2.4;}
+function pathTo(w,sx,sy){
+  const p=[];
+  if(Math.abs(w.y-CY)>26 && Math.abs(sy-CY)>26){p.push({x:w.x,y:CY});p.push({x:sx,y:CY});}
+  p.push({x:sx,y:sy}); w.path=p;
+}
+function go(w,fsm,stKey){w.fsm=fsm;const s=ST[stKey];pathTo(w,s.sx,s.sy);}
+
+function arrive(w){
+  switch(w.fsm){
+    case "to_research": w.fsm="work_research"; w.dur=w.timer=rnd(2.4,3.8); say(w,"gathering signal…"); break;
+    case "to_analysis": w.fsm="work_analysis"; w.dur=w.timer=rnd(2.2,3.4); say(w,"crunching the numbers…"); break;
+    case "to_pit": w.fsm="at_pit"; submit(w); say(w,"boss — ship it?"); w.dur=w.timer=rnd(2,3); break;
+    case "to_cooler": w.fsm="rest"; w.dur=w.timer=rnd(1.8,3); say(w,"no edge. quick break."); break;
+  }
+}
+function tickWork(w,dt){
+  w.timer-=dt;
+  if(w.timer>0) return;
+  switch(w.fsm){
+    case "work_research": go(w,"to_analysis","analysis"); break;
+    case "work_analysis":
+      if(Math.random()<w.edgeP){ go(w,"to_pit","pit"); }
+      else { say(w,"market's fair. passing."); go(w,"to_cooler","cooler"); }
+      break;
+    case "at_pit": go(w,"to_research","research"); break;
+    case "rest": go(w,"to_research","research"); break;
+  }
+}
+const WORKING=["work_research","work_analysis","at_pit","rest"];
+
+function submit(w){
+  const m=MKTS[Math.floor(Math.random()*MKTS.length)];
+  const side=Math.random()<.5?"yes":"no";
+  tickets.push({id:++tid,wk:w.key,who:`${w.name} · ${w.role.split("·")[1].trim()}`,
+    tk:m.tk,ti:m.ti,side,size:`${40+Math.floor(Math.random()*60)} @ ${m.p}¢`});
+  renderDock();
+}
+
+const SPEED=95;
+function update(dt){
+  for(const w of WORKERS){
+    if(w.sayT>0) w.sayT-=dt;
+    if(frozen){ continue; }
+    if(w.path.length){
+      const t=w.path[0], dx=t.x-w.x, dy=t.y-w.y, d=Math.hypot(dx,dy), step=SPEED*dt;
+      if(d<=step){ w.x=t.x; w.y=t.y; w.path.shift(); if(!w.path.length) arrive(w); }
+      else { w.x+=dx/d*step; w.y+=dy/d*step; if(Math.abs(dx)>1) w.dir=dx<0?-1:1; w.walk+=dt*10; }
+    } else if(WORKING.includes(w.fsm)){
+      tickWork(w,dt); w.bob+=dt*4;
+    }
+  }
+}
+
+// ── drawing ───────────────────────────────────────────
+function roundRect(x,y,w,h,r){ctx.beginPath();ctx.roundRect(x,y,w,h,r);}
+function drawFloor(){
+  // carpet
+  ctx.fillStyle="#0c1119"; ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle="rgba(255,255,255,.025)"; ctx.lineWidth=1;
+  for(let x=0;x<=W;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+  for(let y=0;y<=H;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+  // aisle band
+  ctx.fillStyle="rgba(77,208,255,.04)"; ctx.fillRect(0,CY-46,W,92);
+}
+function drawStation(s){
+  const [x,y,w,h]=s.desk;
+  // zone glow
+  ctx.fillStyle=s.c+"14"; roundRect(x-16,y-14,w+32,h+58,16); ctx.fill();
+  // desk
+  ctx.fillStyle="#1b2533"; roundRect(x,y,w,h,10); ctx.fill();
+  ctx.strokeStyle=s.c+"55"; ctx.lineWidth=1.5; ctx.stroke();
+  // monitor glow
+  ctx.fillStyle=s.c+"33"; roundRect(x+w/2-34,y+h/2-16,68,30,5); ctx.fill();
+  ctx.fillStyle=s.c; ctx.fillRect(x+w/2-30,y+h/2-12,5,22);
+  // label
+  ctx.font="700 13px "+"'Bricolage Grotesque',sans-serif"; ctx.fillStyle=s.c;
+  ctx.textAlign="center"; ctx.fillText(s.label,x+w/2,y-22);
+  ctx.textAlign="start";
+}
+function drawWorker(w){
+  const bobbing = w.path.length>0;
+  const yo = bobbing ? Math.sin(w.walk)*2 : Math.sin(w.bob)*1.2;
+  const x=w.x, y=w.y+yo;
+  // shadow
+  ctx.fillStyle="rgba(0,0,0,.35)"; ctx.beginPath(); ctx.ellipse(w.x,w.y+20,15,5,0,0,7); ctx.fill();
+  // selection ring
+  if(selected===w){ctx.strokeStyle=w.col;ctx.lineWidth=2;ctx.beginPath();ctx.arc(w.x,w.y+4,24,0,7);ctx.stroke();}
+  // legs (walk cycle)
+  const lp = bobbing?Math.sin(w.walk)*4:0;
+  ctx.fillStyle="#11151c";
+  roundRect(x-7,y+10,5,12+lp,2);ctx.fill(); roundRect(x+2,y+10,5,12-lp,2);ctx.fill();
+  // body
+  ctx.fillStyle=w.col; roundRect(x-11,y-8,22,22,7); ctx.fill();
+  // little badge dot
+  ctx.fillStyle="rgba(0,0,0,.25)"; ctx.beginPath();ctx.arc(x+(w.dir>0?5:-5),y+2,2.5,0,7);ctx.fill();
+  // head
+  ctx.fillStyle="#f3ead9"; ctx.beginPath();ctx.arc(x,y-14,9,0,7);ctx.fill();
+  // eyes (face dir)
+  ctx.fillStyle="#1a1f29"; const ex=w.dir>0?2:-2;
+  ctx.beginPath();ctx.arc(x-3+ex,y-15,1.5,0,7);ctx.arc(x+3+ex,y-15,1.5,0,7);ctx.fill();
+  // name tag
+  ctx.font="600 11px "+"'IBM Plex Mono',monospace"; ctx.textAlign="center";
+  ctx.fillStyle="rgba(8,12,18,.8)"; const tw=ctx.measureText(w.name).width;
+  roundRect(x-tw/2-5,y+26,tw+10,15,4); ctx.fill();
+  ctx.fillStyle=w.col; ctx.fillText(w.name,x,y+37);
+  // work progress bar
+  if(["work_research","work_analysis","at_pit"].includes(w.fsm) && w.path.length===0){
+    const pr=1-Math.max(w.timer,0)/w.dur;
+    ctx.fillStyle="rgba(255,255,255,.12)"; roundRect(x-16,y-30,32,5,3); ctx.fill();
+    ctx.fillStyle=w.col; roundRect(x-16,y-30,32*pr,5,3); ctx.fill();
+  }
+  // speech bubble
+  if(w.sayT>0){
+    ctx.font="500 12px "+"'IBM Plex Mono',monospace";
+    const bw=ctx.measureText(w.sayText).width+18, bx=x-bw/2, by=y-58;
+    ctx.fillStyle="rgba(16,21,30,.97)"; ctx.strokeStyle=w.col+"66"; ctx.lineWidth=1;
+    roundRect(bx,by,bw,24,8); ctx.fill(); ctx.stroke();
+    ctx.beginPath();ctx.moveTo(x-5,by+24);ctx.lineTo(x+5,by+24);ctx.lineTo(x,by+31);ctx.fill();
+    ctx.fillStyle="#dfe7f2"; ctx.fillText(w.sayText,x,by+16);
+  }
+  ctx.textAlign="start";
+}
+function draw(){
+  drawFloor();
+  for(const k in ST) drawStation(ST[k]);
+  // draw workers sorted by y for depth
+  [...WORKERS].sort((a,b)=>a.y-b.y).forEach(drawWorker);
+  if(frozen){
+    ctx.fillStyle="rgba(255,93,93,.06)"; ctx.fillRect(0,0,W,H);
+    ctx.font="800 22px 'Bricolage Grotesque',sans-serif"; ctx.fillStyle="#ff5d5d"; ctx.textAlign="center";
+    ctx.fillText("— LINE STOPPED —",W/2,40); ctx.textAlign="start";
+  }
+}
+
+let last=performance.now();
+function loop(t){
+  let dt=(t-last)/1000; last=t; if(dt>0.05)dt=0.05;
+  update(dt); draw(); requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+// ── dock (approvals) ──────────────────────────────────
+function renderDock(){
+  const d=document.getElementById("dock");
+  if(!tickets.length){d.innerHTML=`<div class="pit-empty">THE PIT IS EMPTY — workers are still digging for edges.</div>`;return;}
+  d.innerHTML=tickets.map(t=>`
+    <div class="ticket" data-id="${t.id}">
+      <div class="top"><span class="who">${t.who}</span><span class="side ${t.side}">${t.side.toUpperCase()}</span></div>
+      <div class="ti">${t.ti}</div>
+      <div class="meta">${t.tk} · ${t.size}</div>
+      <div class="acts"><button class="ship" data-a="1">SHIP IT</button><button class="reject" data-a="0">REJECT</button></div>
+    </div>`).join("");
+}
+renderDock();
+document.getElementById("dock").addEventListener("click",e=>{
+  const b=e.target.closest("button[data-a]"); if(!b) return;
+  const card=b.closest(".ticket"), id=+card.dataset.id, t=tickets.find(x=>x.id===id);
+  const w=WORKERS.find(x=>x.key===t.wk);
+  if(b.dataset.a==="1"){ const amt=rnd(8,46); output+=amt; document.getElementById("out").textContent="$"+output.toFixed(2);
+    if(w){say(w,"let's go! 🚀".replace("🚀","")); say(w,"booked it!");} }
+  else if(w){ say(w,"rejected. back to it."); }
+  tickets=tickets.filter(x=>x.id!==id); renderDock();
+});
+
+// ── interactions ──────────────────────────────────────
+function toWorld(e){const r=cvs.getBoundingClientRect();return{x:(e.clientX-r.left)/r.width*W,y:(e.clientY-r.top)/r.height*H};}
+cvs.addEventListener("click",e=>{
+  const p=toWorld(e); selected=null;
+  for(const w of WORKERS){ if(Math.hypot(p.x-w.x,p.y-w.y-2)<26){selected=w;break;} }
+  const tip=document.getElementById("tip");
+  if(selected){
+    tip.style.display="block";
+    tip.style.left=Math.min(e.offsetX,cvs.clientWidth-180)+"px";
+    tip.style.top=Math.max(e.offsetY-90,0)+"px";
+    const w=selected;
+    tip.innerHTML=`<div class="nm" style="color:${w.col}">${w.name}</div><div class="rl">${w.role}</div>
+      <div class="r"><span>Level</span><span>L${w.lv}</span></div>
+      <div class="r"><span>P&amp;L</span><span style="color:${w.pnl>=0?'var(--up)':'var(--down)'}">${(w.pnl<0?'−$':'$')+Math.abs(w.pnl).toFixed(2)}</span></div>
+      <div class="r"><span>Trades</span><span>${w.trades}</span></div>
+      <div class="r"><span>Hit rate</span><span>${w.hit}%</span></div>`;
+  } else tip.style.display="none";
+});
+
+document.getElementById("stop").addEventListener("click",e=>{
+  frozen=!frozen; e.currentTarget.setAttribute("aria-pressed",String(frozen));
+  const m=document.getElementById("mode");
+  m.textContent=frozen?"HALTED":"PAPER";
+  m.style.cssText=frozen?"border-color:var(--down);color:var(--down);background:rgba(255,93,93,.1)":"";
+  WORKERS.forEach(w=>say(w,frozen?"line stopped.":"back to the grind."));
+});
+</script>
+</body>
+</html>
