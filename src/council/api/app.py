@@ -65,7 +65,12 @@ def create_app(settings: Settings | None = None, store: RunStore | None = None) 
             while True:
                 await asyncio.sleep(3)
                 try:
-                    app.state.floor.tick()
+                    # A live debate makes ~7 sequential blocking model calls (~minutes).
+                    # Run tick() in a worker thread so the event loop stays free to serve
+                    # the control buttons (MODE/ARM/STOP) and polls — otherwise the whole
+                    # UI freezes for the duration of every debate. awaiting it also means
+                    # we never start a second debate while one is still running.
+                    await asyncio.to_thread(app.state.floor.tick)
                 except Exception:  # never let the monitor loop crash the server
                     pass
         task = asyncio.create_task(floor_loop())
