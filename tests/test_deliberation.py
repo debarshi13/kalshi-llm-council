@@ -31,9 +31,16 @@ def test_consensus_place_no_side():
     out = decide(d, m, CAPS)
     assert out.place is True
     assert out.side == "no"
-    # NO entry = 1 - 0.62 = 0.38 -> 38c; contracts = floor(5/0.38)=13
+    # NO entry = 1 - 0.62 = 0.38 -> 38c; conviction-scaled size (modest edge) -> 5 contracts
     assert out.limit_price_cents == 38
-    assert out.contracts == 13
+    assert out.contracts == 5
+
+def test_conviction_sizing_scales_with_edge():
+    m = Market("X", "x?", 0.50)
+    small = decide(_delib(m.id, 0.58, 0.0), m, CAPS)   # 8c edge, full agreement
+    big = decide(_delib(m.id, 0.72, 0.0), m, CAPS)     # 22c edge -> full conviction
+    assert small.place and big.place
+    assert big.contracts > small.contracts             # bigger edge -> bigger bet (within cap)
 
 def test_consensus_place_yes_side():
     m = Market("CPI-NOV-HOT", "CPI hot?", 0.41)

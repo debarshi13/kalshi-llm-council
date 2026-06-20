@@ -42,7 +42,8 @@ class Decision:
 
 
 def decide(d: Deliberation, market: Market, caps: RiskGuard,
-           edge_threshold: float = 0.06, spread_cap: float = 0.05) -> Decision:
+           edge_threshold: float = 0.06, spread_cap: float = 0.05,
+           full_conviction_edge: float = 0.20) -> Decision:
     edge = d.converged_p - market.yes_price
     side = "yes" if edge > 0 else "no"
     entry = market.yes_price if side == "yes" else round(1 - market.yes_price, 2)
@@ -53,9 +54,17 @@ def decide(d: Deliberation, market: Market, caps: RiskGuard,
     if abs(edge) < edge_threshold:
         return Decision(False, None, 0, price_cents,
                         f"edge {abs(edge)*100:.1f}c < {edge_threshold*100:.0f}c threshold")
-    contracts = max(1, int(caps.max_position_usd / max(entry, 0.05)))
+    # Conviction-scaled sizing: deploy more of the position cap when the edge is large
+    # AND the panel agrees tightly. Never below 30% of cap once the gate clears, never
+    # above it — RiskGuard enforces the hard money limit regardless of this fraction.
+    span = max(full_conviction_edge - edge_threshold, 1e-9)
+    conviction = min(1.0, (abs(edge) - edge_threshold) / span)
+    agreement = 1.0 - min(d.spread / spread_cap, 1.0)
+    size_frac = 0.3 + 0.7 * conviction * agreement
+    contracts = max(1, int((caps.max_position_usd * size_frac) / max(entry, 0.05)))
     return Decision(True, side, contracts, price_cents,
-                    f"{abs(edge)*100:.1f}c {side.upper()} edge, spread {d.spread:.3f} ok -> PLACE")
+                    f"{abs(edge)*100:.1f}c {side.upper()} edge, spread {d.spread:.3f}, "
+                    f"size {size_frac*100:.0f}% -> PLACE")
 
 
 _SYS = ('You are a calibrated prediction-market analyst. '

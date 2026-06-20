@@ -28,7 +28,7 @@ from .research import WebSearchResearch, openrouter_online_search
 BOOKS = [
     ("A", "Claude", "claude", 0.56, "openrouter/anthropic/claude-opus-4.8", "news"),
     ("B", "Kimi K2", "kimi", 0.61, "openrouter/moonshotai/kimi-k2.6", "cross_source"),
-    ("C", "GLM-5.2", "glm", 0.43, "openrouter/z-ai/glm-5.2", "reasoning"),
+    ("C", "GPT-5.4", "gpt", 0.50, "openrouter/openai/gpt-5.4", "reasoning"),
 ]
 
 
@@ -36,6 +36,7 @@ class FloorState:
     EDGE = 0.06
     MAX_PENDING = 2
     MAX_LIVE_CALLS = 300      # session backstop on top of the OpenRouter $ cap
+    MIN_VOLUME = int(os.environ.get("MIN_MARKET_VOLUME", 50))  # below this a market can't reliably fill
 
     def __init__(self) -> None:
         self.markets = MockMarketData().list_markets()
@@ -125,18 +126,27 @@ class FloorState:
         if kid and pk:
             try:
                 from .market import KalshiMarketData
-                mk = [m for m in KalshiMarketData(kid, pk).list_markets() if 0.05 <= m.yes_price <= 0.95]
-                liquid = [m for m in mk if m.volume > 500][:10] or mk[:10]
-                if liquid:
-                    self._log(f"loaded {len(liquid)} live Kalshi markets")
-                    return liquid
+                mk = [m for m in KalshiMarketData(kid, pk).list_markets()
+                      if 0.05 <= m.yes_price <= 0.95 and m.volume >= self.MIN_VOLUME]
+                # Target thin, under-followed (but tradeable) markets — cheap_score ranks them.
+                picks = sorted(mk, key=self.cheap_score, reverse=True)[:20] or mk[:20]
+                if picks:
+                    self._log(f"loaded {len(picks)} live Kalshi markets (thin-market focus)")
+                    return picks
             except Exception as exc:  # noqa: BLE001
                 self._log(f"Kalshi load failed ({type(exc).__name__}); falling back to mock markets")
         return self.markets
 
     def cheap_score(self, m) -> float:
-        """Rank without an LLM: prefer liquid markets priced away from the extremes."""
-        return m.volume * (1.0 - abs(0.5 - m.yes_price) * 2)
+        """Rank toward thin, under-followed markets — where the price is closest to a
+        raw crowd guess and a researched council is likeliest to have an edge — but
+        still tradeable. Below MIN_VOLUME a market is untradeable (-inf). Small bonus
+        for tail prices (cheaper Kalshi fees, documented favorite-longshot bias)."""
+        if m.volume < self.MIN_VOLUME:
+            return float("-inf")
+        thin = 1.0 / (1.0 + m.volume / 500.0)        # lower volume ranks higher
+        tail_bonus = abs(0.5 - m.yes_price) * 0.5     # extreme prices = cheaper fees
+        return thin + tail_bonus
 
     def _council_eval(self) -> None:
         if self.calls >= self.MAX_LIVE_CALLS:
