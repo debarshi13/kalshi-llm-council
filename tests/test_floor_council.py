@@ -47,6 +47,15 @@ def test_daily_trade_cap_halts():
     f._council_eval(); f._council_eval()
     assert len(f.trader.orders) == 1
 
+def test_call_cap_disables_live():
+    """A council that keeps debating must hit the MAX_LIVE_CALLS backstop and auto-stop."""
+    f = _armed_floor(FakeCouncil(p=0.50, spread=0.01))
+    f.calls = f.MAX_LIVE_CALLS
+    f._council_eval()
+    assert f.live is False
+    assert f.trader.orders == []      # capped before debating/placing
+    assert f.last_debate is None
+
 def test_snapshot_exposes_debate():
     f = _armed_floor(FakeCouncil(p=0.50, spread=0.01))
     f._council_eval()

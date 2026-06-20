@@ -139,6 +139,10 @@ class FloorState:
         return m.volume * (1.0 - abs(0.5 - m.yes_price) * 2)
 
     def _council_eval(self) -> None:
+        if self.calls >= self.MAX_LIVE_CALLS:
+            self.live = False
+            self._log(f"live call cap ({self.MAX_LIVE_CALLS}) reached — LIVE auto-disabled")
+            return
         if self.trades_today >= self.MAX_TRADES_PER_DAY:
             return
         pool = [m for m in self._live_markets if m.id not in self._council_seen] or self._live_markets
