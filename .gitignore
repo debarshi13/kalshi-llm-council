@@ -8,3 +8,10 @@ runs/*/
 !runs/.gitkeep
 council.db
 *.log
+
+# secrets — never commit (keys live in ~/.secrets/, outside the repo)
+*.pem
+*.key
+*.p8
+.env.txt
+*.secret
