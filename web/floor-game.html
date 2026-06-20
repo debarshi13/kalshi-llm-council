@@ -150,13 +150,7 @@ function tickWork(w,dt){
 }
 const WORKING=["work_research","work_analysis","at_pit","rest"];
 
-function submit(w){
-  const m=MKTS[Math.floor(Math.random()*MKTS.length)];
-  const side=Math.random()<.5?"yes":"no";
-  tickets.push({id:++tid,wk:w.key,who:`${w.name} · ${w.role.split("·")[1].trim()}`,
-    tk:m.tk,ti:m.ti,side,size:`${40+Math.floor(Math.random()*60)} @ ${m.p}¢`});
-  renderDock();
-}
+function submit(w){ /* trade tickets now come from the live floor (server) */ }
 
 const SPEED=95;
 function update(dt){
@@ -269,19 +263,20 @@ function renderDock(){
     <div class="ticket" data-id="${t.id}">
       <div class="top"><span class="who">${t.who}</span><span class="side ${t.side}">${t.side.toUpperCase()}</span></div>
       <div class="ti">${t.ti}</div>
-      <div class="meta">${t.tk} · ${t.size}</div>
+      <div class="meta">${t.tk} · ${t.contracts} @ ${Math.round(t.price*100)}¢</div>
       <div class="acts"><button class="ship" data-a="1">SHIP IT</button><button class="reject" data-a="0">REJECT</button></div>
     </div>`).join("");
 }
 renderDock();
-document.getElementById("dock").addEventListener("click",e=>{
+document.getElementById("dock").addEventListener("click",async e=>{
   const b=e.target.closest("button[data-a]"); if(!b) return;
-  const card=b.closest(".ticket"), id=+card.dataset.id, t=tickets.find(x=>x.id===id);
-  const w=WORKERS.find(x=>x.key===t.wk);
-  if(b.dataset.a==="1"){ const amt=rnd(8,46); output+=amt; document.getElementById("out").textContent="$"+output.toFixed(2);
-    if(w){say(w,"let's go! 🚀".replace("🚀","")); say(w,"booked it!");} }
-  else if(w){ say(w,"rejected. back to it."); }
-  tickets=tickets.filter(x=>x.id!==id); renderDock();
+  const card=b.closest(".ticket"), id=+card.dataset.id, granted=b.dataset.a==="1";
+  const t=tickets.find(x=>x.id===id), w=t&&WORKERS.find(x=>x.key===t.key);
+  if(w) say(w, granted?"booked it!":"rejected. back to it.");
+  b.disabled=true;
+  try{ await fetch("/api/floor/approve",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({id,granted})}); }catch(_){}
+  poll();
 });
 
 // ── interactions ──────────────────────────────────────
@@ -303,13 +298,34 @@ cvs.addEventListener("click",e=>{
   } else tip.style.display="none";
 });
 
-document.getElementById("stop").addEventListener("click",e=>{
-  frozen=!frozen; e.currentTarget.setAttribute("aria-pressed",String(frozen));
+function reflectStop(){
+  document.getElementById("stop").setAttribute("aria-pressed",String(frozen));
   const m=document.getElementById("mode");
   m.textContent=frozen?"HALTED":"PAPER";
   m.style.cssText=frozen?"border-color:var(--down);color:var(--down);background:rgba(255,93,93,.1)":"";
+}
+document.getElementById("stop").addEventListener("click",async ()=>{
+  frozen=!frozen; reflectStop();
   WORKERS.forEach(w=>say(w,frozen?"line stopped.":"back to the grind."));
+  try{ await fetch("/api/floor/stop",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({frozen})}); }catch(_){}
 });
+
+// ── live floor polling (server is the source of truth) ─
+async function poll(){
+  try{
+    const r=await fetch("/api/floor"); if(!r.ok) return;
+    const d=await r.json();
+    output=d.output;
+    document.getElementById("out").textContent=(d.output<0?"−$":"$")+Math.abs(d.output).toFixed(2);
+    d.books.forEach(b=>{const w=WORKERS.find(x=>x.key===b.key);
+      if(w){w.pnl=b.pnl; w.trades=b.trades; if(b.hit!=null)w.hit=b.hit;}});
+    tickets=d.tickets;
+    renderDock();
+    if(d.frozen!==frozen){frozen=d.frozen; reflectStop();}
+  }catch(_){ /* server not running — the floor stays idle */ }
+}
+setInterval(poll,2500); poll();
 </script>
 </body>
 </html>

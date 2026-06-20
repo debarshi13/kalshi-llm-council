@@ -1,12 +1,15 @@
 """FastAPI mission-control backend.
 
-Wraps the council: start runs, stream their events over SSE, browse history,
-and resolve human-approval gates from the dashboard.
+Serves the floor game (/) and the data dashboard (/dashboard), exposes a live
+paper-floor state the UI polls (/api/floor), and keeps the original council
+run endpoints (/api/runs...). A background task ticks the floor so the UI shows
+real, evolving activity to monitor and approve.
 """
 from __future__ import annotations
 
 import asyncio
 import json
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -20,6 +23,7 @@ from ..config import Settings, load_settings
 from ..council import ApprovalGate
 from ..events import EventBus, EventType
 from ..runner import execute_run
+from ..trading.floor import FloorState
 
 WEB_DIR = Path(__file__).resolve().parents[3] / "web"
 
@@ -34,14 +38,63 @@ class Approve(BaseModel):
     granted: bool = True
 
 
+class FloorApprove(BaseModel):
+    id: int
+    granted: bool = True
+
+
+class FloorStop(BaseModel):
+    frozen: bool
+
+
+def _page(name: str) -> FileResponse:
+    p = WEB_DIR / name
+    if not p.exists():
+        raise HTTPException(404, f"{name} not found in web/")
+    return FileResponse(p)
+
+
 def create_app(settings: Settings | None = None, store: RunStore | None = None) -> FastAPI:
-    app = FastAPI(title="Council Mission Control", version="0.1.0")
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        async def floor_loop():
+            while True:
+                await asyncio.sleep(3)
+                try:
+                    app.state.floor.tick()
+                except Exception:  # never let the monitor loop crash the server
+                    pass
+        task = asyncio.create_task(floor_loop())
+        try:
+            yield
+        finally:
+            task.cancel()
+
+    app = FastAPI(title="Council Mission Control", version="0.2.0", lifespan=lifespan)
     app.state.settings = settings or load_settings()
     app.state.bus = EventBus()
     app.state.store = store or RunStore()
-    app.state.gates = {}        # run_id -> ApprovalGate
-    app.state.tasks = {}        # run_id -> asyncio.Task (keep refs alive)
+    app.state.gates = {}
+    app.state.tasks = {}
+    app.state.floor = FloorState()
 
+    # ── live floor (what the UI polls) ──────────────────────────────────────
+    @app.get("/api/floor")
+    async def floor():
+        return app.state.floor.snapshot()
+
+    @app.post("/api/floor/approve")
+    async def floor_approve(body: FloorApprove):
+        if not app.state.floor.approve(body.id, body.granted):
+            raise HTTPException(404, "no such ticket")
+        return {"ok": True}
+
+    @app.post("/api/floor/stop")
+    async def floor_stop(body: FloorStop):
+        app.state.floor.frozen = body.frozen
+        return {"frozen": body.frozen}
+
+    # ── council runs (original) ─────────────────────────────────────────────
     @app.post("/api/runs")
     async def start_run(body: StartRun):
         if not body.task.strip():
@@ -92,12 +145,14 @@ def create_app(settings: Settings | None = None, store: RunStore | None = None) 
             raise HTTPException(409, "approval already resolved or unknown")
         return {"ok": True}
 
+    # ── pages ───────────────────────────────────────────────────────────────
     @app.get("/")
-    async def index():
-        idx = WEB_DIR / "index.html"
-        if not idx.exists():
-            return {"service": "council", "ui": "missing", "hint": "web/index.html not found"}
-        return FileResponse(idx)
+    async def game():
+        return _page("floor-game.html")
+
+    @app.get("/dashboard")
+    async def dashboard():
+        return _page("mission-control.html")
 
     if WEB_DIR.exists():
         app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")

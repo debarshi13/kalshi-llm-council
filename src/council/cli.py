@@ -57,13 +57,24 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="cmd", required=True)
     run_p = sub.add_parser("run", help="run a coding task")
     run_p.add_argument("task", help="the task description")
-    run_p.add_argument("--engine", choices=["crewai", "mock"], default=None,
+    run_p.add_argument("--engine", choices=["litellm", "crewai", "mock"], default=None,
                        help="override config engine (use 'mock' for an offline demo)")
     run_p.add_argument("--config", default="config.yaml")
+
+    serve_p = sub.add_parser("serve", help="launch the mission-control web server (game + dashboard)")
+    serve_p.add_argument("--host", default="127.0.0.1")
+    serve_p.add_argument("--port", type=int, default=8777)
 
     args = parser.parse_args(argv)
     if args.cmd == "run":
         return asyncio.run(_run(args.task, args.engine, args.config))
+    if args.cmd == "serve":
+        import uvicorn
+
+        console.print(f"[bold]Council[/] → floor game at [cyan]http://{args.host}:{args.port}/[/]  "
+                      f"· dashboard at [cyan]/dashboard[/]")
+        uvicorn.run("council.api.app:app", host=args.host, port=args.port, log_level="warning")
+        return 0
     return 2
 
 
