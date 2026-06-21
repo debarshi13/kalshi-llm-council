@@ -7,7 +7,9 @@ protocol so the paper harness runs offline against `MockMarketData` and swaps to
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Protocol
 
 
@@ -19,6 +21,7 @@ class Market:
     volume: int = 0
     status: str = "open"      # "open" | "resolved"
     outcome: int | None = None  # 1 (YES) | 0 (NO) once resolved
+    close_ts: int = 0         # unix epoch the market closes (0 = unknown)
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.yes_price <= 1.0:
@@ -124,14 +127,15 @@ class KalshiMarketData:
 
     # Markets closing within this window are the ones actually being traded; a bare
     # ?status=open query returns thousands of dead auto-generated markets first.
-    CLOSE_WINDOW_DAYS = 7
+    # Lower = shorter-horizon / "daytrade" markets. Env-tunable.
+    CLOSE_WINDOW_DAYS = float(os.environ.get("MARKET_HORIZON_DAYS", 7))
     MAX_PAGES = 8
 
     def list_markets(self) -> list[Market]:
         import time
 
         now = int(time.time())
-        window = now + self.CLOSE_WINDOW_DAYS * 86400
+        window = now + int(self.CLOSE_WINDOW_DAYS * 86400)
         out: list[Market] = []
         cursor = ""
         for _ in range(self.MAX_PAGES):
@@ -178,4 +182,14 @@ class KalshiMarketData:
             volume=int(cls._fnum(m.get("volume_fp"))),
             status=status,
             outcome=outcome,
+            close_ts=cls._parse_ts(m.get("close_time")),
         )
+
+    @staticmethod
+    def _parse_ts(s) -> int:
+        if not s:
+            return 0
+        try:
+            return int(datetime.fromisoformat(str(s).replace("Z", "+00:00")).timestamp())
+        except (ValueError, TypeError):
+            return 0

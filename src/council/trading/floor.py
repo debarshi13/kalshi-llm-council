@@ -65,7 +65,11 @@ class FloorState:
         self.trades_today = 0
         self._day = date.today()
         self.DELIBERATE_EVERY = int(os.environ.get("DELIBERATE_EVERY", 5))
-        self.MAX_TRADES_PER_DAY = int(os.environ.get("MAX_TRADES_PER_DAY", 10))
+        self.MAX_TRADES_PER_DAY = int(os.environ.get("MAX_TRADES_PER_DAY", 20))
+        # Daytrade gate (env-tunable): how small an edge to act on, how much model
+        # disagreement to tolerate. Looser = more trades, weaker edges.
+        self.EDGE_THRESHOLD = float(os.environ.get("EDGE_THRESHOLD", 0.03))
+        self.SPREAD_CAP = float(os.environ.get("SPREAD_CAP", 0.08))
         self._council_seen: set[str] = set()
         self.books["council"] = {"book": "★", "name": "Council", "key": "council",
                                  "skill": 0.5, "slug": "council", "strat": "consensus",
@@ -154,13 +158,13 @@ class FloorState:
             return []
 
     def cheap_score(self, m) -> float:
-        """Rank toward LIQUID, newsworthy markets — rich research and real two-sided
-        prices, where the council can actually find and act on a divergence (instead of
-        obscure markets where it just anchors to price and skips). Below MIN_VOLUME a
-        market is untradeable (-inf)."""
+        """Daytrade ranking: liquid AND closing soon. Prefers markets with rich research
+        (volume) that resolve imminently (volume per hour-to-close), so the council acts on
+        fresh, fast-resolving bets. Below MIN_VOLUME a market is untradeable (-inf)."""
         if m.volume < self.MIN_VOLUME:
             return float("-inf")
-        return float(m.volume)
+        hrs = max((m.close_ts - time.time()) / 3600.0, 0.25) if m.close_ts else 9999.0
+        return m.volume / hrs
 
     def _council_eval(self) -> None:
         # Token backstop only bounds LIVE (real-spend) mode; free mock runs unbounded.
@@ -186,7 +190,7 @@ class FloorState:
         self._council_seen.add(m.id)
         notes = self.research.context_for(m) if self.research else "No external signal available."
         d = self.council.debate(m, notes)
-        dec = decide(d, m, self.guard)
+        dec = decide(d, m, self.guard, edge_threshold=self.EDGE_THRESHOLD, spread_cap=self.SPREAD_CAP)
         self.last_debate = (d, dec)
         if self.live:
             self.calls += 1 + 2 * len(self.council.specs)  # 1 research + 2 rounds x N models

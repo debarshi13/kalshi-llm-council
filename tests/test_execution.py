@@ -7,16 +7,19 @@ from council.trading.floor import FloorState
 
 
 # --- order construction (pure, no network) ---------------------------------
-def test_build_order_yes():
+def test_build_order_yes_is_bid_in_dollars():
     b = KalshiTrader.build_order("FED-X", "yes", 10, 62)
-    assert b["ticker"] == "FED-X" and b["side"] == "yes" and b["count"] == 10
-    assert b["action"] == "buy" and b["type"] == "limit" and b["yes_price"] == 62
-    assert "yes_price" in b and "no_price" not in b and "client_order_id" in b
+    assert b["ticker"] == "FED-X"
+    assert b["side"] == "bid"            # buy YES == bid on the YES leg (V2)
+    assert b["count"] == "10.00"         # fixed-point string
+    assert b["price"] == "0.6200"        # dollars, not cents
+    assert b["time_in_force"] and b["self_trade_prevention_type"]
+    assert "client_order_id" in b and "yes_price" not in b
 
 
-def test_build_order_no():
-    b = KalshiTrader.build_order("X", "no", 5, 59)
-    assert b["no_price"] == 59 and "yes_price" not in b
+def test_build_order_no_is_ask_at_complement():
+    b = KalshiTrader.build_order("X", "no", 5, 59)   # buy NO @59c == sell YES @41c
+    assert b["side"] == "ask" and b["price"] == "0.4100" and b["count"] == "5.00"
 
 
 def test_build_order_rejects_bad_inputs():

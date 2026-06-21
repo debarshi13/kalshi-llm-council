@@ -31,7 +31,7 @@ def _armed_floor(council):
 def test_council_eval_places_real_order_on_consensus():
     f = _armed_floor(FakeCouncil(p=0.50, spread=0.01))   # 12c NO edge, tight
     f._council_eval()
-    assert f.trader.orders == [("FED-DEC-CUT", "no", 7, 38)]   # conviction-scaled size
+    assert f.trader.orders == [("FED-DEC-CUT", "no", 8, 38)]   # conviction-scaled size (3c daytrade gate)
     assert f.last_debate is not None
     assert f.trades_today == 1
 

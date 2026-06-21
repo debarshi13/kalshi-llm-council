@@ -40,8 +40,9 @@ class KalshiTrader:
     """Places real orders on Kalshi. Live-only; lazy imports; default real host."""
 
     HOST = "https://api.elections.kalshi.com"
-    DEMO = "https://demo-api.kalshi.co"
+    DEMO = "https://external-api.demo.kalshi.co"
     PREFIX = "/trade-api/v2"
+    ORDER_PATH = "/portfolio/events/orders"   # V2 create-order (old /portfolio/orders is 410 deprecated)
 
     def __init__(self, key_id: str, private_key_path: str, host: str | None = None) -> None:
         self.key_id = key_id
@@ -69,30 +70,40 @@ class KalshiTrader:
 
     @staticmethod
     def build_order(ticker: str, side: str, count: int, limit_price_cents: int) -> dict:
-        """Construct a Kalshi limit-order body. Pure — safe to unit-test offline."""
+        """Construct a Kalshi V2 order body. Pure — safe to unit-test offline.
+
+        V2 trades the YES leg only (side "bid"/"ask"), prices as dollar strings:
+          buy YES  -> bid at the YES price
+          buy NO   -> ask at the equivalent YES price (1 - no_price), since
+                      buying NO @ p is economically selling YES @ (1 - p).
+        immediate_or_cancel = take available liquidity now, never leave a resting order.
+        """
         if side not in ("yes", "no"):
             raise ValueError(f"side must be yes/no, got {side!r}")
         if count < 1:
             raise ValueError("count must be >= 1")
-        price = int(round(limit_price_cents))
-        if not 1 <= price <= 99:
-            raise ValueError(f"limit price must be 1-99 cents, got {price}")
-        body = {
+        cents = int(round(limit_price_cents))
+        if not 1 <= cents <= 99:
+            raise ValueError(f"limit price must be 1-99 cents, got {cents}")
+        if side == "yes":
+            v2_side, price = "bid", cents / 100.0
+        else:
+            v2_side, price = "ask", (100 - cents) / 100.0
+        return {
             "ticker": ticker,
-            "action": "buy",
-            "side": side,
-            "count": count,
-            "type": "limit",
+            "side": v2_side,
+            "count": f"{int(count):.2f}",
+            "price": f"{price:.4f}",
+            "time_in_force": "immediate_or_cancel",
+            "self_trade_prevention_type": "taker_at_cross",
             "client_order_id": str(uuid.uuid4()),
         }
-        body["yes_price" if side == "yes" else "no_price"] = price
-        return body
 
     def place_order(self, ticker: str, side: str, count: int, limit_price_cents: int) -> dict:
-        """LIVE — spends real money. Unverified against a real order; test on DEMO first."""
+        """LIVE — spends real money. Posts to the Kalshi V2 create-order endpoint."""
         import httpx
 
-        path = self.PREFIX + "/portfolio/orders"
+        path = self.PREFIX + self.ORDER_PATH
         body = self.build_order(ticker, side, count, limit_price_cents)
         resp = httpx.post(self.host + path, headers=self._signed_headers("POST", path), json=body, timeout=15)
         resp.raise_for_status()
