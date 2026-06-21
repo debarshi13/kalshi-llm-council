@@ -35,6 +35,7 @@ BOOKS = [
 class FloorState:
     MAX_LIVE_CALLS = 300      # session backstop on top of the OpenRouter $ cap
     MIN_VOLUME = int(os.environ.get("MIN_MARKET_VOLUME", 50))  # below this a market can't reliably fill
+    SPEAK_ORDER = ("claude", "gpt", "kimi")   # roundtable order; most capable (Kimi) speaks last
 
     def __init__(self) -> None:
         self.markets = MockMarketData().list_markets()
@@ -71,14 +72,15 @@ class FloorState:
                                  "pnl": 0.0, "open": [], "wins": 0, "trades": 0}
         # Free PAPER mode deliberates with a mock council (no API calls) so it
         # produces ONE consensus decision per market — same shape as LIVE.
-        self.council = MockCouncil([bk["name"] for k, bk in self.books.items() if k != "council"])
+        self.council = MockCouncil([self.books[k]["name"] for k in self.SPEAK_ORDER if k in self.books])
         self.research = MockResearch()
 
     # ── control ─────────────────────────────────────────────────────────────
     def enable_live(self, budget: float = 10.0) -> None:
         client = ModelClient(budget_usd=budget)
-        specs = [ModelSpec(bk["slug"], "Estimate a calibrated P(YES).")
-                 for k, bk in self.books.items() if k != "council"]
+        # Speaking order matters: Kimi K2 (most capable) speaks LAST so it hears the others.
+        specs = [ModelSpec(self.books[k]["slug"], "roundtable analyst")
+                 for k in self.SPEAK_ORDER if k in self.books]
         self.council = DeliberativeCouncil(specs, client)
         if os.environ.get("COUNCIL_RESEARCH", "online").lower() == "online":
             self.research = WebSearchResearch(openrouter_online_search(client))
@@ -142,7 +144,7 @@ class FloorState:
             # Target thin, under-followed (but tradeable) markets — cheap_score ranks them.
             picks = sorted(mk, key=self.cheap_score, reverse=True)[:20]
             if picks:
-                self._log(f"loaded {len(picks)} live Kalshi markets (of {len(raw)} fetched, thin-market focus)")
+                self._log(f"loaded {len(picks)} live Kalshi markets (of {len(raw)} fetched, liquid-market focus)")
                 return picks
             self._log(f"⚠ NO TRADEABLE LIVE MARKETS — {len(raw)} fetched, none cleared "
                       f"vol≥{self.MIN_VOLUME} & price 0.05–0.95; live trading disabled.")
@@ -152,15 +154,13 @@ class FloorState:
             return []
 
     def cheap_score(self, m) -> float:
-        """Rank toward thin, under-followed markets — where the price is closest to a
-        raw crowd guess and a researched council is likeliest to have an edge — but
-        still tradeable. Below MIN_VOLUME a market is untradeable (-inf). Small bonus
-        for tail prices (cheaper Kalshi fees, documented favorite-longshot bias)."""
+        """Rank toward LIQUID, newsworthy markets — rich research and real two-sided
+        prices, where the council can actually find and act on a divergence (instead of
+        obscure markets where it just anchors to price and skips). Below MIN_VOLUME a
+        market is untradeable (-inf)."""
         if m.volume < self.MIN_VOLUME:
             return float("-inf")
-        thin = 1.0 / (1.0 + m.volume / 500.0)        # lower volume ranks higher
-        tail_bonus = abs(0.5 - m.yes_price) * 0.5     # extreme prices = cheaper fees
-        return thin + tail_bonus
+        return float(m.volume)
 
     def _council_eval(self) -> None:
         # Token backstop only bounds LIVE (real-spend) mode; free mock runs unbounded.

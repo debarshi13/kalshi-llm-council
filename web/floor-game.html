@@ -82,12 +82,13 @@
   .theater{margin-top:12px;border:1px solid var(--line);border-radius:11px;background:var(--panel);padding:12px 13px}
   .theater[hidden]{display:none}
   .theater h4{margin:0 0 10px;font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.1em;color:var(--muted);display:flex;align-items:center;gap:8px}
-  .theater .cols{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
-  .col{border:1px solid var(--line);border-radius:9px;padding:10px;background:#0d121b}
-  .col .nm{font-family:var(--disp);font-weight:700;font-size:13px}
-  .col .p{font-family:var(--mono);font-size:20px;margin:4px 0;font-variant-numeric:tabular-nums}
-  .col .p .r1{color:var(--faint);font-size:12px}
-  .col .th{font-size:11.5px;color:var(--muted);line-height:1.45}
+  .theater .cols{display:flex;flex-direction:column;gap:8px}
+  .turn{border:1px solid var(--line);border-radius:9px;padding:9px 11px;background:#0d121b}
+  .turn .hd{display:flex;align-items:baseline;gap:8px;margin-bottom:3px}
+  .turn .nm{font-family:var(--disp);font-weight:700;font-size:13px}
+  .turn .pv{margin-left:auto;font-family:var(--mono);font-size:15px;font-variant-numeric:tabular-nums;color:var(--accent)}
+  .turn .last{font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;color:var(--up);border:1px solid var(--up);border-radius:999px;padding:0 6px}
+  .turn .msg{font-size:12px;color:var(--muted);line-height:1.5}
   .verdict{margin-top:10px;font-family:var(--mono);font-size:12.5px;padding:8px 11px;border-radius:8px;text-align:center}
   .verdict.place{color:var(--up);background:rgba(61,220,132,.1);border:1px solid var(--up)}
   .verdict.skip{color:var(--faint);background:#0d121b;border:1px solid var(--line)}
@@ -410,13 +411,14 @@ function renderDebate(dz){
   if(!dz){ sec.hidden=true; return; }
   const reduce=window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   document.getElementById("th-market").textContent=dz.market_id;
-  const r1=Object.fromEntries(dz.round1.map(e=>[e.model,e]));
-  document.getElementById("th-cols").innerHTML=dz.round2.map(e=>`
-    <div class="col" data-model="${e.model}">
-      <div class="nm">${e.model}</div>
-      <div class="p"><span class="r2">${(e.p*100).toFixed(0)}%</span>
-        <span class="r1">r1 ${((r1[e.model]?.p ?? e.p)*100).toFixed(0)}%</span></div>
-      <div class="th">${e.thesis}</div>
+  // round2 is the roundtable transcript, in speaking order (last speaker = most capable).
+  const turns=dz.round2, n=turns.length;
+  const strip=s=>String(s).replace(/\s*P\(YES\)\s*:?.*/is,"").trim();  // hide the trailing P(YES): line
+  document.getElementById("th-cols").innerHTML=turns.map((e,i)=>`
+    <div class="turn" data-model="${e.model}">
+      <div class="hd"><span class="nm">${e.model}</span>${i===n-1?'<span class="last">CLOSES</span>':''}
+        <span class="pv">${(e.p*100).toFixed(0)}%</span></div>
+      <div class="msg">${strip(e.thesis)||e.thesis}</div>
     </div>`).join("");
   const v=document.getElementById("th-verdict"), dec=dz.decision;
   v.className="verdict "+(dec.place?"place":"skip");
@@ -425,7 +427,7 @@ function renderDebate(dz){
     : `SKIP · ${dec.reason}`;
   const wasHidden=sec.hidden; sec.hidden=false;
   if(!reduce && wasHidden && window.anime){
-    anime({targets:"#th-cols .col",opacity:[0,1],translateY:[8,0],delay:anime.stagger(80),duration:260,easing:"easeOutQuad"});
+    anime({targets:"#th-cols .turn",opacity:[0,1],translateY:[8,0],delay:anime.stagger(90),duration:260,easing:"easeOutQuad"});
     anime({targets:"#th-verdict",opacity:[0,1],scale:[0.96,1],duration:240,easing:"easeOutBack"});
   }
 }

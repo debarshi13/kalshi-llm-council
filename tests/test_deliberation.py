@@ -9,21 +9,19 @@ def _delib(market_id, converged_p, spread):
     return Deliberation(market_id, [], [], converged_p, spread, "")
 
 
-class RecordingClient:
-    """Returns scripted JSON per model; records messages so we can assert round-2 context."""
-    def __init__(self, r1: dict[str, float], r2: dict[str, float]):
-        self.r1, self.r2 = r1, r2
+class RoundtableClient:
+    """Returns a roundtable message ending in a 'P(YES): x' line per model; records the
+    prompts each speaker received so we can assert the conversation is shared."""
+    def __init__(self, probs: dict[str, float]):
+        self.probs = probs
         self.messages = []
     def complete(self, spec, messages):
         self.messages.append(messages)
-        user = messages[-1]["content"]
-        table = self.r2 if "PEER ESTIMATES" in user else self.r1
-        p = table[spec.model]
-        return f'{{"prob_yes": {p}, "thesis": "model {spec.model} says {p}"}}', {}
+        return f"My read on it. P(YES): {self.probs[spec.model]}", {}
 
-def _council():
-    specs = [ModelSpec("m-claude", "g"), ModelSpec("m-kimi", "g"), ModelSpec("m-glm", "g")]
-    return specs
+_PANEL = [ModelSpec("openrouter/anthropic/claude-opus-4.8", "g"),
+          ModelSpec("openrouter/openai/gpt-5.4", "g"),
+          ModelSpec("openrouter/moonshotai/kimi-k2.6", "g")]   # Kimi speaks last
 
 def test_consensus_place_no_side():
     m = Market("FED-DEC-CUT", "Fed cuts?", 0.62)
@@ -67,36 +65,28 @@ def test_price_clamped_to_valid_range():
     out = decide(d, m, CAPS)
     assert 1 <= out.limit_price_cents <= 99
 
-def test_debate_runs_two_rounds_and_converges():
-    specs = _council()
-    client = RecordingClient(
-        r1={"m-claude": 0.58, "m-kimi": 0.49, "m-glm": 0.55},
-        r2={"m-claude": 0.54, "m-kimi": 0.52, "m-glm": 0.54},
-    )
+def test_roundtable_one_shared_conversation_kimi_last():
+    probs = {_PANEL[0].model: 0.58, _PANEL[1].model: 0.54, _PANEL[2].model: 0.52}
+    client = RoundtableClient(probs)
     m = Market("FED-DEC-CUT", "Fed cuts?", 0.62)
-    d = DeliberativeCouncil(specs, client).debate(m, "Jobs report hot.")
-    assert [e.model for e in d.round1] == ["m-claude", "m-kimi", "m-glm"]
+    d = DeliberativeCouncil(_PANEL, client).debate(m, "Jobs report hot.")
+    assert len(client.messages) == 3            # ONE turn each, not 6 isolated calls
     assert len(d.round2) == 3
-    assert abs(d.converged_p - (0.54+0.52+0.54)/3) < 1e-4
+    assert d.round2[-1].model == "Kimi K2"      # most-capable model closes the debate
+    assert abs(d.converged_p - (0.58+0.54+0.52)/3) < 1e-4
     assert d.spread > 0
-    # 6 model calls total (3 per round)
-    assert len(client.messages) == 6
 
-def test_round2_prompt_includes_peer_estimates():
-    specs = _council()
-    client = RecordingClient(r1={"m-claude":0.5,"m-kimi":0.5,"m-glm":0.5},
-                             r2={"m-claude":0.5,"m-kimi":0.5,"m-glm":0.5})
-    m = Market("X", "x?", 0.5)
-    DeliberativeCouncil(specs, client).debate(m, "notes")
-    round2_msgs = [msg for msg in client.messages if "PEER ESTIMATES" in msg[-1]["content"]]
-    assert len(round2_msgs) == 3
-    # a peer's round-1 number appears in the round-2 prompt
-    assert "0.5" in round2_msgs[0][-1]["content"]
+def test_later_speakers_see_earlier_turns():
+    client = RoundtableClient({s.model: 0.5 for s in _PANEL})
+    DeliberativeCouncil(_PANEL, client).debate(Market("X", "x?", 0.5), "notes")
+    first_prompt = client.messages[0][-1]["content"]
+    last_prompt = client.messages[-1][-1]["content"]
+    assert "speak first" in first_prompt.lower()         # opener has no transcript yet
+    assert "Claude" in last_prompt and "GPT-5.4" in last_prompt  # Kimi sees both priors
 
-def test_unparseable_reply_defers_to_market_price():
-    specs = [ModelSpec("m1", "g")]
-    class Junk:
-        def complete(self, spec, messages): return "no json here", {}
+def test_parse_prob_handles_p_yes_line_and_defers():
+    from council.trading.deliberation import _parse_prob
     m = Market("X", "x?", 0.37)
-    d = DeliberativeCouncil(specs, Junk()).debate(m, "")
-    assert d.round1[0].p_yes == 0.37   # parse_estimate defers to market price
+    assert abs(_parse_prob("I lean yes. P(YES): 0.82", m) - 0.82) < 1e-9
+    assert abs(_parse_prob("call it P(YES): 85%", m) - 0.85) < 1e-9
+    assert _parse_prob("no number stated here", m) == 0.37   # defers to market price

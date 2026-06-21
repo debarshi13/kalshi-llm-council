@@ -67,8 +67,17 @@ def decide(d: Deliberation, market: Market, caps: RiskGuard,
                     f"size {size_frac*100:.0f}% -> PLACE")
 
 
-_SYS = ('You are a calibrated prediction-market analyst. '
-        'Respond ONLY with JSON: {"prob_yes": <0..1>, "thesis": "<one sentence>"}.')
+import re
+
+_PYES_RE = re.compile(r"p\s*\(?\s*yes\s*\)?\s*[:=]\s*([01]?\.?\d+)\s*(%?)", re.I)
+
+_ROUNDTABLE_SYS = (
+    "You are {name}, one of three sharp prediction-market analysts at a roundtable with "
+    "Claude, GPT-5.4, and Kimi K2. You are pricing ONE market together. Read the research "
+    "and whatever your colleagues have already said, engage with their points directly "
+    "(agree, push back, or refine — don't just restate), keep it to 2-3 sentences, and END "
+    "your message with a line exactly:\nP(YES): <number between 0 and 1>"
+)
 
 
 def _market_block(market: Market, notes: str) -> str:
@@ -77,30 +86,56 @@ def _market_block(market: Market, notes: str) -> str:
             f"Research notes:\n{notes}\n")
 
 
+def _name_for(slug: str) -> str:
+    s = slug.lower()
+    if "claude" in s:
+        return "Claude"
+    if "kimi" in s:
+        return "Kimi K2"
+    if "gpt" in s or "openai" in s:
+        return "GPT-5.4"
+    return slug.split("/")[-1]
+
+
+def _parse_prob(text: str, market: Market) -> float:
+    """Extract the final 'P(YES): x' from a roundtable message; accepts 0-1 or a percent.
+    Falls back to the JSON/prob parser, then to the market price (claim no edge)."""
+    matches = _PYES_RE.findall(text)
+    if matches:
+        val, pct = matches[-1]            # the LAST stated number is the final answer
+        p = float(val)
+        if pct or p > 1:
+            p /= 100.0
+        return min(max(p, 0.0), 1.0)
+    return parse_estimate(text, market).prob_yes
+
+
 class DeliberativeCouncil:
     def __init__(self, specs: list[ModelSpec], client: ModelClient) -> None:
-        self.specs = specs
+        self.specs = specs            # speaking order; the most capable model should be last
         self.client = client
 
-    def _ask(self, spec: ModelSpec, market: Market, user: str) -> ModelEstimate:
-        text, _ = self.client.complete(
-            spec, [{"role": "system", "content": _SYS}, {"role": "user", "content": user}])
-        est = parse_estimate(text, market)
-        return ModelEstimate(spec.model, est.prob_yes, est.thesis)
-
     def debate(self, market: Market, notes: str) -> Deliberation:
-        block = _market_block(market, notes)
-        round1 = [self._ask(s, market, block + "\nGive your calibrated P(YES) and a one-sentence thesis.")
-                  for s in self.specs]
-        peer = "PEER ESTIMATES (round 1):\n" + "\n".join(
-            f"- {e.model}: P(YES) {e.p_yes:.2f} — {e.thesis}" for e in round1)
-        round2 = [self._ask(s, market, block + "\n" + peer +
-                            "\nReconsider in light of your peers and give your final P(YES) and one-sentence thesis.")
-                  for s in self.specs]
-        ps = [e.p_yes for e in round2]
+        """A real roundtable: each model speaks once, in order, seeing the full conversation
+        so far. The system+research prefix is identical across turns (cache-friendly); the
+        growing transcript rides in the user message. The last speaker hears everyone."""
+        prefix = _market_block(market, notes)
+        transcript: list[ModelEstimate] = []
+        convo = ""
+        for spec in self.specs:
+            name = _name_for(spec.model)
+            system = _ROUNDTABLE_SYS.format(name=name) + "\n\n" + prefix
+            user = (convo or "You speak first — open the discussion.") + \
+                   f"\n\nYou are {name}. Give your take and end with 'P(YES): <0-1>'."
+            text, _ = self.client.complete(
+                spec, [{"role": "system", "content": system}, {"role": "user", "content": user}])
+            msg = text.strip()
+            transcript.append(ModelEstimate(name, _parse_prob(msg, market), msg))
+            convo += f"\n{name}: {msg}\n"
+        ps = [t.p_yes for t in transcript]
         converged = sum(ps) / len(ps)
         spread = statistics.pstdev(ps) if len(ps) > 1 else 0.0
-        return Deliberation(market.id, round1, round2, round(converged, 4), round(spread, 4), notes)
+        return Deliberation(market.id, [], transcript, round(converged, 4), round(spread, 4), notes)
 
 
 class MockCouncil:
@@ -115,14 +150,11 @@ class MockCouncil:
     def debate(self, market: Market, notes: str) -> Deliberation:
         import random
         base = market.yes_price
-        def est(name: str) -> ModelEstimate:
-            p = min(max(base + random.gauss(0, 0.10), 0.02), 0.98)
-            return ModelEstimate(name, round(p, 3), f"{name}: mock read around {p:.0%}")
-        round1 = [est(n) for n in self.specs]
-        # round 2 nudges each estimate toward the round-1 mean (simulated convergence)
-        m1 = sum(e.p_yes for e in round1) / len(round1)
-        round2 = [ModelEstimate(e.model, round((e.p_yes + m1) / 2, 3), e.thesis) for e in round1]
-        ps = [e.p_yes for e in round2]
+        transcript: list[ModelEstimate] = []
+        for name in self.specs:           # speaking order (Kimi last, as the floor builds it)
+            p = round(min(max(base + random.gauss(0, 0.08), 0.02), 0.98), 3)
+            transcript.append(ModelEstimate(name, p, f"{name}: I read this around {p:.0%}. P(YES): {p:.2f}"))
+        ps = [t.p_yes for t in transcript]
         converged = sum(ps) / len(ps)
         spread = statistics.pstdev(ps) if len(ps) > 1 else 0.0
-        return Deliberation(market.id, round1, round2, round(converged, 4), round(spread, 4), notes)
+        return Deliberation(market.id, [], transcript, round(converged, 4), round(spread, 4), notes)
