@@ -157,12 +157,14 @@ const rnd=(a,b)=>a+Math.random()*(b-a);
 
 // ── stations: desk rect + stand-spot (sx,sy) in the open aisle ──
 const ST={
-  research:{label:"RESEARCH LAB",  desk:[70,70,230,90],  sx:185,sy:210, c:"#4dd0ff"},
-  analysis:{label:"ANALYSIS BAY",  desk:[700,70,230,90], sx:815,sy:210, c:"#3ddc84"},
-  risk:    {label:"RISK OFFICE",   desk:[70,460,230,90], sx:185,sy:430, c:"#ff5d5d"},
-  pit:     {label:"THE PIT",       desk:[700,460,230,90],sx:815,sy:430, c:"#ffb74d"},
-  cooler:  {label:"BREAK ROOM",    desk:[455,275,90,72], sx:500,sy:392, c:"#8593a8"},
+  research:{label:"RESEARCH LAB",  desk:[70,70,230,90],  sx:185,sy:210, c:"#28e0ff"},
+  analysis:{label:"ANALYSIS BAY",  desk:[700,70,230,90], sx:815,sy:210, c:"#7cff6b"},
+  risk:    {label:"RISK OFFICE",   desk:[70,460,230,90], sx:185,sy:430, c:"#ff4d77"},
+  pit:     {label:"THE PIT",       desk:[700,460,230,90],sx:815,sy:430, c:"#ffd23f"},
+  cooler:  {label:"COUNCIL ROOM",  desk:[418,248,164,124], sx:500,sy:430, c:"#ff5fd2"},
 };
+// seats around the council table — the 3 AIs convene here for a real debate
+const COUNCIL_SEATS=[{x:452,y:300},{x:548,y:300},{x:500,y:372}];
 
 const WORKERS=[
   {key:"claude",name:"Claude",role:"News desk · Book A",col:"#ff9d5c",lv:7,pnl:96.40,trades:31,hit:58,edgeP:.55},
@@ -179,10 +181,11 @@ const MKTS=[
 
 let frozen=false, output=0, tickets=[], tid=0, selected=null;
 
-// init workers at the break room, staggered
+// init workers at their desks (they meet in the COUNCIL ROOM only for real debates)
 WORKERS.forEach((w,i)=>{
-  w.x=480+i*22; w.y=400; w.dir=1; w.walk=0; w.path=[];
-  w.fsm="rest"; w.timer=0.6+i*1.2; w.dur=w.timer; w.sayText=""; w.sayT=0; w.bob=Math.random()*6;
+  const home = i===2 ? ST.analysis : ST.research;
+  w.x=home.sx + (i*20-20); w.y=home.sy; w.dir=1; w.walk=0; w.path=[];
+  w.fsm="rest"; w.timer=0.6+i*1.2; w.dur=w.timer; w.sayText=""; w.sayT=0; w.bob=Math.random()*6; w.councilMsg="";
 });
 
 function say(w,t){w.sayText=t;w.sayT=2.4;}
@@ -197,24 +200,24 @@ function arrive(w){
   switch(w.fsm){
     case "to_research": w.fsm="work_research"; w.dur=w.timer=rnd(2.4,3.8); say(w,"gathering signal…"); break;
     case "to_analysis": w.fsm="work_analysis"; w.dur=w.timer=rnd(2.2,3.4); say(w,"crunching the numbers…"); break;
-    case "to_pit": w.fsm="at_pit"; say(w, w.pitMsg || "boss — ship it?"); w.pitMsg=""; w.dur=w.timer=rnd(2,3); break;
-    case "to_cooler": w.fsm="rest"; w.dur=w.timer=rnd(1.8,3); say(w,"no edge. quick break."); break;
+    case "to_seat":     w.fsm="at_council"; say(w, w.councilMsg || "let's debate this."); w.dur=w.timer=rnd(4,6); break;
+    case "to_pit":      w.fsm="at_pit"; say(w, w.pitMsg || "ship it?"); w.pitMsg=""; w.dur=w.timer=rnd(2,3); break;
+    case "to_cooler":   w.fsm="rest"; w.dur=w.timer=rnd(1.8,3); say(w,"quick break."); break;
   }
 }
 function tickWork(w,dt){
   w.timer-=dt;
   if(w.timer>0) return;
   switch(w.fsm){
+    // Ambient desk loop between debates (real meetings are driven by driveFloor).
     case "work_research": go(w,"to_analysis","analysis"); break;
-    case "work_analysis":
-      // Ambient loop only. Real trips to THE PIT are driven by server events
-      // (see reactToActivity) — never a client-side coin flip.
-      say(w,"scanning for an edge…"); go(w,"to_cooler","cooler"); break;
+    case "work_analysis": say(w,"scanning for an edge…"); go(w,"to_research","research"); break;
     case "at_pit": go(w,"to_research","research"); break;
     case "rest": go(w,"to_research","research"); break;
+    case "at_council": say(w, w.councilMsg || "…"); w.timer=rnd(4,6); break;  // linger until disperse
   }
 }
-const WORKING=["work_research","work_analysis","at_pit","rest"];
+const WORKING=["work_research","work_analysis","at_pit","rest","at_council"];
 
 const SPEED=95;
 function update(dt){
@@ -386,7 +389,7 @@ async function poll(){
       if(w){w.pnl=b.pnl; w.trades=b.trades; if(b.hit!=null)w.hit=b.hit;}});
     tickets=d.tickets;
     renderDock();
-    reactToActivity(d.activity||[]);
+    driveFloor(d);
     renderFeed(d.activity||[]);
     renderDebate(d.debate);
     if(d.frozen!==frozen){frozen=d.frozen; reflectStop();}
@@ -394,9 +397,6 @@ async function poll(){
   }catch(_){ /* server not running — the floor stays idle */ }
 }
 
-// ── real activity → animation + feed (the floor now tells the truth) ──
-const NAME2KEY=Object.fromEntries(WORKERS.map(w=>[w.name,w.key]));
-function workerForLine(s){ for(const nm in NAME2KEY){ if(s.startsWith(nm)) return WORKERS.find(w=>w.key===NAME2KEY[nm]); } return null; }
 function classifyEvent(s){
   if(/LIVE ORDER PLACED|SHIPPED/.test(s)) return "ev-order";
   if(/ORDER FAILED/.test(s))               return "ev-fail";
@@ -404,18 +404,37 @@ function classifyEvent(s){
   if(/model error|failed|cap .*reached|DISARMED/.test(s)) return "ev-warn";
   return "";
 }
-let _seenAct=new Set();
-function reactToActivity(activity){
-  // activity is newest-first; replay only lines we haven't animated yet
-  for(const a of [...activity].reverse()){
-    const id=a.t+"|"+a.s; if(_seenAct.has(id)) continue; _seenAct.add(id);
-    const w=workerForLine(a.s); if(!w) continue;
-    if(/LIVE ORDER PLACED|SHIPPED/.test(a.s)){ w.pitMsg="filled — "+a.s.split("—").pop().trim(); go(w,"to_pit","pit"); }
-    else if(/ORDER FAILED/.test(a.s)){ w.pitMsg="order failed!"; go(w,"to_pit","pit"); }
-    else if(/RISK BLOCKED/.test(a.s)){ w.pitMsg="risk blocked it"; go(w,"to_pit","pit"); }
-    else if(/wants (YES|NO)/.test(a.s)){ const m=a.s.match(/wants (YES|NO) (\S+)/); w.pitMsg=m?`boss — ${m[1]} ${m[2]}?`:"boss — ship it?"; go(w,"to_pit","pit"); }
-  }
-  if(_seenAct.size>400) _seenAct=new Set([...activity].map(a=>a.t+"|"+a.s));
+
+// ── floor choreography: drive the AIs from the REAL debate, not random ──
+// On each NEW debate the three AIs walk into the COUNCIL ROOM, sit around the table
+// and show their actual roundtable line; after they've deliberated they disperse — to
+// THE PIT if the council decided to PLACE, back to their desks if it was a SKIP.
+let _lastConvene=null;
+function driveFloor(d){
+  const dz=d.debate; if(!dz) return;
+  const id=dz.market_id+"|"+(dz.round2||[]).map(t=>t.p).join(",");
+  if(id===_lastConvene) return;
+  _lastConvene=id;
+  convene(dz);
+}
+function convene(dz){
+  const byName=Object.fromEntries((dz.round2||[]).map(t=>[t.model,t]));
+  WORKERS.forEach((w,i)=>{
+    const t=byName[w.name];
+    if(t){ const s=String(t.thesis).replace(/\s*P\(YES\).*$/is,"").trim();
+           w.councilMsg=`${s.slice(0,44)} (${Math.round(t.p*100)}%)`; }
+    else { w.councilMsg="thinking…"; }
+    const seat=COUNCIL_SEATS[i%COUNCIL_SEATS.length];
+    w.fsm="to_seat"; pathTo(w, seat.x, seat.y);
+  });
+  clearTimeout(window._disperseT);
+  window._disperseT=setTimeout(()=>disperse(dz.decision), 7000);
+}
+function disperse(dec){
+  WORKERS.forEach((w,i)=>{
+    if(dec && dec.place){ w.pitMsg=`${(dec.side||"").toUpperCase()} — ship it!`; w.fsm="to_pit"; pathTo(w, ST.pit.sx, ST.pit.sy); }
+    else { const k=i%2?"analysis":"research"; w.fsm=i%2?"to_analysis":"to_research"; pathTo(w, ST[k].sx, ST[k].sy); say(w,"no edge — back to it"); }
+  });
 }
 function renderFeed(activity){
   const ul=document.getElementById("log");
