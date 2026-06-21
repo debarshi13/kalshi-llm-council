@@ -130,3 +130,14 @@ def test_book_kill_switch_blocks_all():
     md = MockMarketData()
     book = _book(beliefs={"FED-DEC-CUT": 0.85}, kill=True)
     assert book.run_tick(md, ["FED-DEC-CUT"]) == []
+
+
+def test_to_market_parses_resolution_rules():
+    from council.trading.market import KalshiMarketData
+    m = KalshiMarketData._to_market({
+        "ticker": "X", "title": "t", "yes_bid_dollars": "0.58", "yes_ask_dollars": "0.60",
+        "volume_fp": "100", "rules_primary": "Resolves YES if core PCE is above 0.2%.",
+        "rules_secondary": "Per the BEA monthly release.",
+    })
+    assert "above 0.2%" in m.rules and "BEA" in m.rules
+    assert KalshiMarketData._to_market({"ticker": "Y", "title": "t"}).rules == ""

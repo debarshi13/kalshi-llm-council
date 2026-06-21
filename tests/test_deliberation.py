@@ -90,3 +90,29 @@ def test_parse_prob_handles_p_yes_line_and_defers():
     assert abs(_parse_prob("I lean yes. P(YES): 0.82", m) - 0.82) < 1e-9
     assert abs(_parse_prob("call it P(YES): 85%", m) - 0.85) < 1e-9
     assert _parse_prob("no number stated here", m) == 0.37   # defers to market price
+
+
+def test_decide_wide_spread_erases_edge_skips():
+    # mid looks like a 5c YES edge, but the ask is 0.70 -> no real edge -> SKIP (the T30 fix)
+    m = Market("X", "x?", 0.50, yes_bid=0.30, yes_ask=0.70)
+    out = decide(_delib(m.id, 0.55, 0.0), m, CAPS)
+    assert out.place is False
+
+def test_decide_tight_spread_places_executable():
+    m = Market("X", "x?", 0.50, yes_bid=0.49, yes_ask=0.51)
+    out = decide(_delib(m.id, 0.62, 0.0), m, CAPS)   # 0.62 - 0.51 ask = 11c YES edge
+    assert out.place is True and out.side == "yes"
+
+def test_decide_falls_back_to_mid_without_quote():
+    m = Market("FED-DEC-CUT", "Fed cuts?", 0.62)     # no bid/ask -> mid fallback
+    out = decide(_delib(m.id, 0.533, 0.018), m, CAPS)
+    assert out.place is True and out.side == "no" and out.limit_price_cents == 38
+
+def test_debate_prompt_has_rules_quote_and_market_prior():
+    client = RoundtableClient({s.model: 0.5 for s in _PANEL})
+    m = Market("X", "x?", 0.50, yes_bid=0.48, yes_ask=0.52, rules="Resolves YES if above 60.")
+    DeliberativeCouncil(_PANEL, client).debate(m, "some notes")
+    allmsgs = " ".join(msg["content"] for conv in client.messages for msg in conv)
+    assert "above 60" in allmsgs
+    assert "0.48" in allmsgs and "0.52" in allmsgs
+    assert "prior" in allmsgs.lower() and "catalyst" in allmsgs.lower()
