@@ -16,17 +16,17 @@
     --hard:4px 4px 0 #08020f;            /* chunky pixel-block shadow */
   }
   *{box-sizing:border-box}
+  /* CRT scanlines + grid + vignette are all baked into ONE fixed background layer —
+     no blend-mode / no fixed full-screen overlay (those force a full recomposite every
+     animation frame, which made the floor unusably laggy). */
   body{margin:0;color:var(--ink);min-height:100vh;display:flex;flex-direction:column;align-items:center;
     font:18px/1.4 "VT323",ui-monospace,monospace;
     background:
+      repeating-linear-gradient(0deg, rgba(0,0,0,.13) 0 1px, transparent 1px 3px),
       repeating-linear-gradient(0deg, rgba(176,139,255,.05) 0 1px, transparent 1px 32px),
       repeating-linear-gradient(90deg, rgba(176,139,255,.05) 0 1px, transparent 1px 32px),
-      radial-gradient(circle at 50% -10%, #3a1670 0%, #15082b 55%, #0c0420 100%);
+      radial-gradient(circle at 50% -10%, #3a1670 0%, #15082b 50%, #06010f 110%);
     background-attachment:fixed}
-  /* CRT scanlines + vignette (purely cosmetic, click-through) */
-  body::before{content:"";position:fixed;inset:0;z-index:9999;pointer-events:none;
-    background:repeating-linear-gradient(0deg, rgba(0,0,0,0) 0 2px, rgba(0,0,0,.14) 2px 3px);mix-blend-mode:multiply}
-  body::after{content:"";position:fixed;inset:0;z-index:9998;pointer-events:none;box-shadow:inset 0 0 160px rgba(0,0,0,.6)}
   .num{font-family:var(--mono);font-variant-numeric:tabular-nums}
   button{font:inherit;cursor:pointer}
   :focus-visible{outline:3px solid var(--accent);outline-offset:2px}
