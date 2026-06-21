@@ -74,6 +74,9 @@ class FloorState:
         self._council_seen: set[str] = set()
         self.journal = Journal(os.environ.get("JOURNAL_PATH", ":memory:"))
         self._last_fill = None
+        self.MARK_EVERY = int(os.environ.get("MARK_EVERY", 20))
+        self.RESOLVE_EVERY = int(os.environ.get("RESOLVE_EVERY", 40))
+        self._market_data = None
         self.books["council"] = {"book": "★", "name": "Council", "key": "council",
                                  "skill": 0.5, "slug": "council", "strat": "consensus",
                                  "pnl": 0.0, "open": [], "wins": 0, "trades": 0}
@@ -277,6 +280,45 @@ class FloorState:
             return
         if self._tick_n % self.DELIBERATE_EVERY == 0:
             self._council_eval()       # one deliberation per interval — mock OR live
+        if self._tick_n % self.MARK_EVERY == 0:
+            self.mark_open()           # mark-to-market the journal's open real positions
+        if self._tick_n % self.RESOLVE_EVERY == 0:
+            self.resolve_settled()     # backfill true outcomes once markets settle
+
+    def _md(self):
+        if self._market_data is None:
+            from .market import KalshiMarketData
+            kid, pk = os.environ.get("KALSHI_API_KEY_ID"), os.environ.get("KALSHI_PRIVATE_KEY_PATH")
+            self._market_data = KalshiMarketData(kid, pk) if kid and pk else None
+        return self._market_data
+
+    def _open_market_ids(self):
+        return [r["market_id"] for r in self.journal._c.execute(
+            "SELECT DISTINCT market_id FROM trades WHERE status='placed'").fetchall()]
+
+    def mark_open(self) -> None:
+        md = self._md()
+        if not md:
+            return
+        for mid in self._open_market_ids():
+            try:
+                m = md.get_market(mid)
+                if m:
+                    self.journal.mark(mid, m.yes_price)
+            except Exception:  # noqa: BLE001 — marking must never crash the loop
+                pass
+
+    def resolve_settled(self) -> None:
+        md = self._md()
+        if not md:
+            return
+        for mid in self._open_market_ids():
+            try:
+                m = md.get_market(mid)
+                if m and m.status == "resolved" and m.outcome is not None:
+                    self.journal.resolve(mid, "yes" if m.outcome == 1 else "no")
+            except Exception:  # noqa: BLE001
+                pass
 
     def _resolve_mock(self) -> None:
         for bk in self.books.values():

@@ -100,3 +100,14 @@ def test_floor_logs_trade_on_fill():
     f._council_eval()
     rows = f.journal._c.execute("SELECT side,status,fill_count FROM trades").fetchall()
     assert any(r["status"] == "placed" and r["side"] == "no" for r in rows)
+
+def test_resolver_settles_open_trades():
+    from council.trading.market import Market as _M
+    f = _armed_floor(FakeCouncil(p=0.50, spread=0.01))
+    f._council_eval()                      # logs an open NO trade on FED-DEC-CUT
+    class _MD:
+        def get_market(self, tk): return _M(tk, "t", 1.0, status="resolved", outcome=1)
+    f._market_data = _MD()
+    f.resolve_settled()
+    row = f.journal._c.execute("SELECT status,outcome FROM trades WHERE status='resolved'").fetchone()
+    assert row is not None and row["outcome"] == "yes"
