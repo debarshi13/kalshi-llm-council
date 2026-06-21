@@ -6,7 +6,7 @@ from council.trading.execution import RiskGuard
 
 class FakeCouncil:
     def __init__(self, p, spread): self.p, self.spread = p, spread; self.specs = [1, 2, 3]
-    def debate(self, market, notes):
+    def debate(self, market, notes, lessons=""):
         e = [ModelEstimate("a", self.p, "t"), ModelEstimate("b", self.p, "t")]
         return Deliberation(market.id, e, e, self.p, self.spread, notes)
 
@@ -94,3 +94,9 @@ def test_council_paper_fills_when_live_unarmed():
     assert f.trader.orders == []          # no real order placed
     assert len(f.books["council"]["open"]) == 1
     assert f.trades_today == 1
+
+def test_floor_logs_trade_on_fill():
+    f = _armed_floor(FakeCouncil(p=0.50, spread=0.01))
+    f._council_eval()
+    rows = f.journal._c.execute("SELECT side,status,fill_count FROM trades").fetchall()
+    assert any(r["status"] == "placed" and r["side"] == "no" for r in rows)

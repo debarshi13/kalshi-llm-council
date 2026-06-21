@@ -76,7 +76,7 @@ def test_floor_live_path_without_spend():
 
     class FakeCouncil:
         specs = [1, 2, 3]
-        def debate(self, market, notes):
+        def debate(self, market, notes, lessons=""):
             e = [ModelEstimate("a", 0.90, "fake high-conviction read"),
                  ModelEstimate("b", 0.90, "fake high-conviction read")]
             return Deliberation(market.id, e, e, 0.90, 0.01, notes)

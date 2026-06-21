@@ -116,3 +116,10 @@ def test_debate_prompt_has_rules_quote_and_market_prior():
     assert "above 60" in allmsgs
     assert "0.48" in allmsgs and "0.52" in allmsgs
     assert "prior" in allmsgs.lower() and "catalyst" in allmsgs.lower()
+
+def test_debate_prompt_includes_lessons():
+    client = RoundtableClient({s.model: 0.5 for s in _PANEL})
+    m = Market("X", "x?", 0.5)
+    DeliberativeCouncil(_PANEL, client).debate(m, "notes", lessons="LESSONS: your >25c edges 1/8.")
+    allmsgs = " ".join(msg["content"] for conv in client.messages for msg in conv)
+    assert "your >25c edges 1/8" in allmsgs

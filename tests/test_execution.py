@@ -57,7 +57,7 @@ class _FakeTrader:
 class _FakeCouncil:
     """Fake council that always returns a high-conviction consensus."""
     specs = [1, 2, 3]
-    def debate(self, market, notes):
+    def debate(self, market, notes, lessons=""):
         e = [ModelEstimate("a", 0.95, "high conviction"), ModelEstimate("b", 0.95, "high conviction")]
         return Deliberation(market.id, e, e, 0.95, 0.01, notes)
 

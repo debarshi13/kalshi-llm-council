@@ -19,6 +19,7 @@ from datetime import date
 from ..models import ModelClient, ModelSpec
 from .analysts import MockResearch
 from .deliberation import DeliberativeCouncil, MockCouncil, decide
+from .journal import Journal
 from .execution import KalshiTrader, RiskGuard
 from .ledger import kalshi_fee
 from .market import MockMarketData
@@ -71,6 +72,8 @@ class FloorState:
         self.EDGE_THRESHOLD = float(os.environ.get("EDGE_THRESHOLD", 0.03))
         self.SPREAD_CAP = float(os.environ.get("SPREAD_CAP", 0.08))
         self._council_seen: set[str] = set()
+        self.journal = Journal(os.environ.get("JOURNAL_PATH", ":memory:"))
+        self._last_fill = None
         self.books["council"] = {"book": "★", "name": "Council", "key": "council",
                                  "skill": 0.5, "slug": "council", "strat": "consensus",
                                  "pnl": 0.0, "open": [], "wins": 0, "trades": 0}
@@ -147,6 +150,7 @@ class FloorState:
         fill_px = yes_px if side == "yes" else round(1 - yes_px, 4)
         bk["open"].append({"tk": m.id, "contracts": filled, "entry": fill_px,
                            "fee": kalshi_fee(fill_px, filled), "ttl": 9_999})
+        self._last_fill = {"price": fill_px, "count": filled}   # for the journal
         self._log(f"LIVE ORDER FILLED — {bk['name']} {side.upper()} {filled} {m.id} @ {round(fill_px*100)}¢")
         return True
 
@@ -205,7 +209,8 @@ class FloorState:
         m = max(pool, key=self.cheap_score)
         self._council_seen.add(m.id)
         notes = self.research.context_for(m) if self.research else "No external signal available."
-        d = self.council.debate(m, notes)
+        lessons = self.journal.recall(m.id) if self.journal else ""
+        d = self.council.debate(m, notes, lessons)
         dec = decide(d, m, self.guard, edge_threshold=self.EDGE_THRESHOLD, spread_cap=self.SPREAD_CAP)
         self.last_debate = (d, dec)
         if self.live:
@@ -213,11 +218,18 @@ class FloorState:
         self._log(f"Council debate {m.id}: P(YES) {d.converged_p:.2f} vs {m.yes_price:.2f} "
                   f"(spread {d.spread:.3f}) — {dec.reason}")
         if not dec.place:
+            self._journal_log(m, d, dec, side=dec.side or "n/a", fill_price=0.0,
+                              contracts=0, edge=0.0, status="skipped")
             return
         entry = dec.limit_price_cents / 100.0
         if self.execute and not self.frozen:
+            self._last_fill = None
             if self._auto_execute("council", m, dec.side, entry, dec.contracts):
                 self.trades_today += 1
+                fill = self._last_fill or {"price": entry, "count": dec.contracts}
+                self._journal_log(m, d, dec, side=dec.side, fill_price=fill["price"],
+                                  contracts=fill["count"],
+                                  edge=abs(d.converged_p - m.yes_price), status="placed")
         elif self.live:
             # LIVE but unarmed: book a PAPER position so the council can be evaluated
             # on real prices without risking money (settles on the mock timer below).
@@ -225,9 +237,24 @@ class FloorState:
                 {"tk": m.id, "contracts": dec.contracts, "entry": entry,
                  "fee": kalshi_fee(entry, dec.contracts), "ttl": random.randint(2, 5)})
             self.trades_today += 1
+            self._journal_log(m, d, dec, side=dec.side, fill_price=entry,
+                              contracts=dec.contracts,
+                              edge=abs(d.converged_p - m.yes_price), status="placed")
             self._log(f"PAPER FILL — Council {dec.side.upper()} {dec.contracts} {m.id} @ {dec.limit_price_cents}¢")
         else:
             self._council_ticket(m, d, dec)   # free PAPER mode: one ticket to ship/reject
+
+    def _journal_log(self, m, d, dec, *, side, fill_price, contracts, edge, status) -> None:
+        if not self.journal:
+            return
+        rationale = " | ".join(f"{t.model} {t.p_yes:.2f}" for t in d.round2)
+        self.journal.log(market_id=m.id, title=m.title, side=side, converged_p=d.converged_p,
+                         spread=d.spread, market_price=m.yes_price,
+                         executable_price=dec.limit_price_cents / 100.0, edge=edge,
+                         contracts=contracts, fill_price=fill_price,
+                         fee=kalshi_fee(fill_price, contracts) if contracts else 0.0,
+                         fill_count=contracts, decision_reason=dec.reason,
+                         rationale=rationale, status=status)
 
     def _council_ticket(self, m, d, dec) -> None:
         """One consensus ticket for the user to ship/reject. Deduped per market so a

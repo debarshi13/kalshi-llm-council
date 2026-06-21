@@ -88,13 +88,14 @@ _ROUNDTABLE_SYS = (
 )
 
 
-def _market_block(market: Market, notes: str) -> str:
+def _market_block(market: Market, notes: str, lessons: str = "") -> str:
     quote = (f"Live quote: YES bid {market.yes_bid:.2f} / ask {market.yes_ask:.2f}\n"
              if (market.yes_ask or market.yes_bid) else "")
     rules = f"Resolution rules: {market.rules}\n" if market.rules else ""
+    les = f"{lessons}\n" if lessons else ""
     return (f"Market: {market.title} (ticker {market.id})\n"
             f"Current YES price: {market.yes_price:.2f}\n"
-            f"{quote}{rules}Research notes:\n{notes}\n")
+            f"{quote}{rules}{les}Research notes:\n{notes}\n")
 
 
 def _name_for(slug: str) -> str:
@@ -126,11 +127,11 @@ class DeliberativeCouncil:
         self.specs = specs            # speaking order; the most capable model should be last
         self.client = client
 
-    def debate(self, market: Market, notes: str) -> Deliberation:
+    def debate(self, market: Market, notes: str, lessons: str = "") -> Deliberation:
         """A real roundtable: each model speaks once, in order, seeing the full conversation
         so far. The system+research prefix is identical across turns (cache-friendly); the
         growing transcript rides in the user message. The last speaker hears everyone."""
-        prefix = _market_block(market, notes)
+        prefix = _market_block(market, notes, lessons)
         transcript: list[ModelEstimate] = []
         convo = ""
         for spec in self.specs:
@@ -158,7 +159,7 @@ class MockCouncil:
     def __init__(self, model_names: list[str]) -> None:
         self.specs = list(model_names)   # only len() is read by the floor
 
-    def debate(self, market: Market, notes: str) -> Deliberation:
+    def debate(self, market: Market, notes: str, lessons: str = "") -> Deliberation:
         import random
         base = market.yes_price
         transcript: list[ModelEstimate] = []
