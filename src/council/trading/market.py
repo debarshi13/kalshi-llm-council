@@ -22,6 +22,8 @@ class Market:
     status: str = "open"      # "open" | "resolved"
     outcome: int | None = None  # 1 (YES) | 0 (NO) once resolved
     close_ts: int = 0         # unix epoch the market closes (0 = unknown)
+    yes_bid: float = 0.0      # best bid / ask on the YES leg (for crossing the spread)
+    yes_ask: float = 0.0
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.yes_price <= 1.0:
@@ -183,6 +185,8 @@ class KalshiMarketData:
             status=status,
             outcome=outcome,
             close_ts=cls._parse_ts(m.get("close_time")),
+            yes_bid=bid,
+            yes_ask=ask,
         )
 
     @staticmethod

@@ -117,22 +117,38 @@ class FloorState:
                   f"position ${self.guard.max_position_usd:.0f} · total ${self.guard.max_total_exposure_usd:.0f} · "
                   f"daily-loss ${self.guard.max_daily_loss_usd:.0f}.")
 
-    def _auto_execute(self, key, m, side, entry, contracts) -> None:
+    def _auto_execute(self, key, m, side, entry, contracts) -> bool:
+        """Place a real order that actually crosses the spread, and book ONLY what fills.
+        Returns True iff at least one contract filled. Cross: pay the ask to buy YES, hit
+        the bid to buy NO (= sell YES). Falls back to the decided entry if no live quote."""
         bk = self.books[key]
+        if side == "yes":
+            cross = round((m.yes_ask or entry) * 100)
+        else:  # buy NO == sell YES at the bid
+            cross = 100 - round((m.yes_bid or (1 - entry)) * 100)
+        cross = min(99, max(1, int(cross)))
         cost = contracts * entry
         exposure = sum(p["contracts"] * p["entry"] for b in self.books.values() for p in b["open"])
         ok, reason = self.guard.check(cost, exposure, self.output)
         if not ok:
             self._log(f"RISK BLOCKED — {bk['name']} {side.upper()} {m.id}: {reason}")
-            return
+            return False
         try:
-            self.trader.place_order(m.id, side, contracts, round(entry * 100))
+            resp = self.trader.place_order(m.id, side, contracts, cross)
         except Exception as exc:  # noqa: BLE001 — never let a broker error crash the loop
             self._log(f"ORDER FAILED — {bk['name']} {m.id}: {type(exc).__name__}")
-            return
-        bk["open"].append({"tk": m.id, "contracts": contracts, "entry": entry,
-                           "fee": kalshi_fee(entry, contracts), "ttl": 9_999})
-        self._log(f"LIVE ORDER PLACED — {bk['name']} {side.upper()} {contracts} {m.id} @ {round(entry*100)}¢")
+            return False
+        filled = int(float((resp or {}).get("fill_count", 0) or 0))
+        if filled <= 0:
+            self._log(f"NO FILL — {bk['name']} {side.upper()} {m.id} (limit didn't cross)")
+            return False
+        # average_fill_price is in YES terms; book the position in the side's own price
+        yes_px = float((resp or {}).get("average_fill_price", cross / 100.0) or cross / 100.0)
+        fill_px = yes_px if side == "yes" else round(1 - yes_px, 4)
+        bk["open"].append({"tk": m.id, "contracts": filled, "entry": fill_px,
+                           "fee": kalshi_fee(fill_px, filled), "ttl": 9_999})
+        self._log(f"LIVE ORDER FILLED — {bk['name']} {side.upper()} {filled} {m.id} @ {round(fill_px*100)}¢")
+        return True
 
     def _load_live_markets(self) -> list:
         """Real, tradeable Kalshi markets — or [] (NEVER mock). In live mode the floor
@@ -200,8 +216,8 @@ class FloorState:
             return
         entry = dec.limit_price_cents / 100.0
         if self.execute and not self.frozen:
-            self._auto_execute("council", m, dec.side, entry, dec.contracts)
-            self.trades_today += 1
+            if self._auto_execute("council", m, dec.side, entry, dec.contracts):
+                self.trades_today += 1
         elif self.live:
             # LIVE but unarmed: book a PAPER position so the council can be evaluated
             # on real prices without risking money (settles on the mock timer below).

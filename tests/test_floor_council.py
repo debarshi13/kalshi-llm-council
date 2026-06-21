@@ -14,8 +14,13 @@ class FakeResearch:
     def context_for(self, market): return "notes"
 
 class FakeTrader:
-    def __init__(self): self.orders = []
-    def place_order(self, ticker, side, count, cents): self.orders.append((ticker, side, count, cents))
+    def __init__(self, fill=True): self.orders = []; self.fill = fill
+    def place_order(self, ticker, side, count, cents):
+        self.orders.append((ticker, side, count, cents))
+        n = count if self.fill else 0
+        # average_fill_price is YES-terms (sell-YES for a NO order)
+        yes_px = cents / 100.0 if side == "yes" else (100 - cents) / 100.0
+        return {"fill_count": str(n), "average_fill_price": f"{yes_px:.4f}"}
 
 def _armed_floor(council):
     f = FloorState()
@@ -72,6 +77,15 @@ def test_daily_trade_cap_resets_on_new_day():
     f._council_eval()
     assert f.trades_today == 1            # reset on new day, then +1 for this trade
     assert len(f.trader.orders) == 1
+
+def test_no_fill_books_nothing():
+    f = _armed_floor(FakeCouncil(p=0.50, spread=0.01))
+    f.trader = FakeTrader(fill=False)          # order accepted but 0 fill (didn't cross)
+    f._council_eval()
+    assert len(f.trader.orders) == 1           # an order WAS attempted
+    council = next(b for b in f.snapshot()["books"] if b["key"] == "council")
+    assert council["open"] == 0                # but NO phantom position booked
+    assert f.trades_today == 0                 # and it doesn't count toward the daily cap
 
 def test_council_paper_fills_when_live_unarmed():
     f = _armed_floor(FakeCouncil(p=0.50, spread=0.01))

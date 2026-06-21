@@ -50,7 +50,8 @@ class _FakeTrader:
 
     def place_order(self, ticker, side, count, price):
         self.placed.append((ticker, side, count, price))
-        return {"order": {"status": "resting"}}
+        yes_px = price / 100.0 if side == "yes" else (100 - price) / 100.0
+        return {"fill_count": str(count), "average_fill_price": f"{yes_px:.4f}"}
 
 
 class _FakeCouncil:
