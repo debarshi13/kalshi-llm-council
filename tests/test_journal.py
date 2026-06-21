@@ -61,3 +61,19 @@ def test_recall_similar_and_empty():
     j.resolve("KXHORMUZWEEKLY-26JUN21-T30", "yes")   # NO lost
     text = j.recall("KXHORMUZWEEKLY-26JUN21-T99")
     assert "KXHORMUZWEEKLY" in text and "0W/1L" in text
+
+
+def test_mirror_writes_note(tmp_path):
+    from council.trading.journal_mirror import mirror_trade
+    row = {"market_id": "KXFOO-1", "title": "Foo?", "side": "no", "contracts": 3,
+           "fill_price": 0.07, "status": "placed", "decision_reason": "r",
+           "rationale": "Claude 0.34 | Kimi 0.33", "outcome": None,
+           "realized_pnl": None, "council_correct": None}
+    mirror_trade(str(tmp_path), row)
+    note = tmp_path / "wiki" / "trades" / "KXFOO-1.md"
+    assert note.exists() and "Foo?" in note.read_text() and "NO" in note.read_text().upper()
+
+
+def test_mirror_failure_is_silent():
+    from council.trading.journal_mirror import mirror_trade
+    mirror_trade("/nonexistent/\0bad", {"market_id": "X"})  # must not raise

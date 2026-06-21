@@ -77,6 +77,7 @@ class FloorState:
         self.MARK_EVERY = int(os.environ.get("MARK_EVERY", 20))
         self.RESOLVE_EVERY = int(os.environ.get("RESOLVE_EVERY", 40))
         self._market_data = None
+        self.vault_dir = os.environ.get("COUNCIL_VAULT")   # set to the Obsidian vault to mirror trades
         self.books["council"] = {"book": "★", "name": "Council", "key": "council",
                                  "skill": 0.5, "slug": "council", "strat": "consensus",
                                  "pnl": 0.0, "open": [], "wins": 0, "trades": 0}
@@ -251,13 +252,20 @@ class FloorState:
         if not self.journal:
             return
         rationale = " | ".join(f"{t.model} {t.p_yes:.2f}" for t in d.round2)
-        self.journal.log(market_id=m.id, title=m.title, side=side, converged_p=d.converged_p,
-                         spread=d.spread, market_price=m.yes_price,
-                         executable_price=dec.limit_price_cents / 100.0, edge=edge,
-                         contracts=contracts, fill_price=fill_price,
-                         fee=kalshi_fee(fill_price, contracts) if contracts else 0.0,
-                         fill_count=contracts, decision_reason=dec.reason,
-                         rationale=rationale, status=status)
+        tid = self.journal.log(market_id=m.id, title=m.title, side=side, converged_p=d.converged_p,
+                               spread=d.spread, market_price=m.yes_price,
+                               executable_price=dec.limit_price_cents / 100.0, edge=edge,
+                               contracts=contracts, fill_price=fill_price,
+                               fee=kalshi_fee(fill_price, contracts) if contracts else 0.0,
+                               fill_count=contracts, decision_reason=dec.reason,
+                               rationale=rationale, status=status)
+        self._mirror(tid)
+
+    def _mirror(self, trade_id) -> None:
+        if not self.vault_dir:
+            return
+        from .journal_mirror import mirror_trade
+        mirror_trade(self.vault_dir, self.journal.get(trade_id))
 
     def _council_ticket(self, m, d, dec) -> None:
         """One consensus ticket for the user to ship/reject. Deduped per market so a
@@ -317,6 +325,11 @@ class FloorState:
                 m = md.get_market(mid)
                 if m and m.status == "resolved" and m.outcome is not None:
                     self.journal.resolve(mid, "yes" if m.outcome == 1 else "no")
+                    if self.vault_dir:
+                        for r in self.journal._c.execute(
+                                "SELECT id FROM trades WHERE market_id=? AND status='resolved'",
+                                (mid,)).fetchall():
+                            self._mirror(r["id"])
             except Exception:  # noqa: BLE001
                 pass
 
