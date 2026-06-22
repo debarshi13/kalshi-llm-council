@@ -241,3 +241,101 @@ def test_floor_init_scout_disabled(monkeypatch):
     from council.trading.floor import FloorState
     f = FloorState()
     assert f.scout is None
+
+
+from council.trading.deliberation import Deliberation, ModelEstimate
+from council.trading.floor import FloorState
+from council.trading.execution import RiskGuard
+
+
+class _FixedScout:
+    """Test scout that returns a fixed result."""
+    def __init__(self, escalate_ids: list[str], shortlist_n=8, max_escalate=1):
+        self._escalate_ids = set(escalate_ids)
+        self.shortlist_n = shortlist_n
+        self.max_escalate = max_escalate
+        self.shortlist_called = False
+        self.pick_called = False
+
+    def shortlist(self, markets):
+        self.shortlist_called = True
+        return markets[:self.shortlist_n]
+
+    def pick(self, markets, journal):
+        self.pick_called = True
+        return [m for m in markets if m.id in self._escalate_ids][:self.max_escalate]
+
+
+class _FakeCouncilForScout:
+    specs = [1, 2, 3]
+    def __init__(self):
+        self.debated = []
+    def debate(self, market, notes, lessons=""):
+        self.debated.append(market.id)
+        e = [ModelEstimate("a", 0.50, "t"), ModelEstimate("b", 0.50, "t")]
+        return Deliberation(market.id, e, e, 0.50, 0.01, notes)
+
+class _FakeResearchForScout:
+    def context_for(self, market): return "notes"
+
+
+def _floor_with_scout(scout, council=None, live=False):
+    f = FloorState()
+    f.scout = scout
+    f.council = council or _FakeCouncilForScout()
+    f.research = _FakeResearchForScout()
+    f.live = live
+    if live:
+        f._live_markets = [
+            _m(id="MKT-A", price=0.62, volume=1000),
+            _m(id="MKT-B", price=0.50, volume=2000),
+        ]
+        f.execute = False  # live but unarmed
+    else:
+        f.markets = [
+            _m(id="MKT-A", price=0.62, volume=1000),
+            _m(id="MKT-B", price=0.50, volume=2000),
+        ]
+    f.guard = RiskGuard(max_position_usd=5, max_total_exposure_usd=50, max_daily_loss_usd=20)
+    return f
+
+
+def test_funnel_escalated_debates_flagged_market():
+    """When the scout flags MKT-A, council.debate() is called exactly once on MKT-A."""
+    council = _FakeCouncilForScout()
+    f = _floor_with_scout(_FixedScout(escalate_ids=["MKT-A"]), council=council)
+    f._council_eval()
+    assert council.debated == ["MKT-A"]
+
+
+def test_funnel_nothing_escalated_no_debate():
+    """When the scout returns [], council.debate() is never called."""
+    council = _FakeCouncilForScout()
+    f = _floor_with_scout(_FixedScout(escalate_ids=[]), council=council)
+    f._council_eval()
+    assert council.debated == []
+    assert any("no candidates escalated" in a["s"].lower() for a in f.activity)
+
+
+def test_funnel_call_counter_increments_by_one():
+    """In live mode, the scout call increments self.calls by 1."""
+    f = _floor_with_scout(_FixedScout(escalate_ids=["MKT-A"]), live=True)
+    initial_calls = f.calls
+    f._council_eval()
+    # scout call = +1, debate call = +1 + len(specs) = +4; total = +5
+    # But the scout increment is the NEW behavior; debate increment is existing.
+    # We check that the total includes the scout's +1.
+    assert f.calls == initial_calls + 1 + 1 + len(f.council.specs)
+
+
+def test_funnel_backward_compat_scout_disabled(monkeypatch):
+    """With scout=None (SCOUT_MODEL=""), the old cheap_score path fires."""
+    monkeypatch.setenv("SCOUT_MODEL", "")
+    f = FloorState()
+    council = _FakeCouncilForScout()
+    f.council = council
+    f.research = _FakeResearchForScout()
+    assert f.scout is None
+    f._council_eval()
+    # Old path: picks max by cheap_score and debates it
+    assert len(council.debated) == 1

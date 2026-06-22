@@ -75,6 +75,7 @@ def _armed_floor(guard):
     f.execute = True
     f.trader = _FakeTrader()
     f.guard = guard
+    f.scout = None  # disable scout funnel — these tests exercise execution directly
     return f
 
 

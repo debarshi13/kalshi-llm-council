@@ -227,7 +227,21 @@ class FloorState:
             pool = list(markets)
         if not pool:
             return
-        m = max(pool, key=self.cheap_score)
+
+        # ── scout funnel (new) ─────────────────────────────────────────────
+        if self.scout is not None:
+            shortlist = self.scout.shortlist(pool)
+            escalated = self.scout.pick(shortlist, self.journal) if shortlist else []
+            if self.live and shortlist:
+                self.calls += 1  # one cheap scout call
+            if not escalated:
+                self._log("Scout: no candidates escalated — skipping debate")
+                return
+            m = escalated[0]
+        else:
+            # Backward compat: SCOUT_MODEL="" disables the scout
+            m = max(pool, key=self.cheap_score)
+
         self._council_seen.add(m.id)
         notes = self.research.context_for(m) if self.research else "No external signal available."
         lessons = self.journal.recall(m.id) if self.journal else ""
@@ -252,18 +266,15 @@ class FloorState:
                                   contracts=fill["count"],
                                   edge=abs(d.converged_p - m.yes_price), status="placed")
         elif self.live:
-            # LIVE but unarmed: book a PAPER position so the council can be evaluated
-            # on real prices without risking money (settles on the mock timer below).
             self.books["council"]["open"].append(
                 {"tk": m.id, "contracts": dec.contracts, "entry": entry,
                  "fee": kalshi_fee(entry, dec.contracts), "ttl": random.randint(2, 5)})
-            # paper fills do NOT consume MAX_TRADES_PER_DAY (that cap is for real spend)
             self._journal_log(m, d, dec, side=dec.side, fill_price=entry,
                               contracts=dec.contracts,
                               edge=abs(d.converged_p - m.yes_price), status="placed")
             self._log(f"PAPER FILL — Council {dec.side.upper()} {dec.contracts} {m.id} @ {dec.limit_price_cents}¢")
         else:
-            self._council_ticket(m, d, dec)   # free PAPER mode: one ticket to ship/reject
+            self._council_ticket(m, d, dec)
 
     def _journal_log(self, m, d, dec, *, side, fill_price, contracts, edge, status) -> None:
         if not self.journal:
