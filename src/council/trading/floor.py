@@ -136,7 +136,10 @@ class FloorState:
         cross = min(99, max(1, int(cross)))
         cost = contracts * entry
         exposure = sum(p["contracts"] * p["entry"] for b in self.books.values() for p in b["open"])
-        ok, reason = self.guard.check(cost, exposure, self.output)
+        # Daily-loss cap must see REAL settled losses (self.output is mock-only), so feed the
+        # journal's realized P&L since midnight.
+        daily_pnl = self.journal.realized_today() if self.journal else self.output
+        ok, reason = self.guard.check(cost, exposure, daily_pnl)
         if not ok:
             self._log(f"RISK BLOCKED — {bk['name']} {side.upper()} {m.id}: {reason}")
             return False
@@ -218,7 +221,7 @@ class FloorState:
         dec = decide(d, m, self.guard, edge_threshold=self.EDGE_THRESHOLD, spread_cap=self.SPREAD_CAP)
         self.last_debate = (d, dec)
         if self.live:
-            self.calls += 1 + 2 * len(self.council.specs)  # 1 research + 2 rounds x N models
+            self.calls += 1 + len(self.council.specs)  # 1 research + 1 turn per model (lean roundtable)
         self._log(f"Council debate {m.id}: P(YES) {d.converged_p:.2f} vs {m.yes_price:.2f} "
                   f"(spread {d.spread:.3f}) — {dec.reason}")
         if not dec.place:
@@ -240,7 +243,7 @@ class FloorState:
             self.books["council"]["open"].append(
                 {"tk": m.id, "contracts": dec.contracts, "entry": entry,
                  "fee": kalshi_fee(entry, dec.contracts), "ttl": random.randint(2, 5)})
-            self.trades_today += 1
+            # paper fills do NOT consume MAX_TRADES_PER_DAY (that cap is for real spend)
             self._journal_log(m, d, dec, side=dec.side, fill_price=entry,
                               contracts=dec.contracts,
                               edge=abs(d.converged_p - m.yes_price), status="placed")

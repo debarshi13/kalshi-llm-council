@@ -93,7 +93,7 @@ def test_council_paper_fills_when_live_unarmed():
     f._council_eval()
     assert f.trader.orders == []          # no real order placed
     assert len(f.books["council"]["open"]) == 1
-    assert f.trades_today == 1
+    assert f.trades_today == 0            # paper fills don't consume the real daily cap
 
 def test_floor_logs_trade_on_fill():
     f = _armed_floor(FakeCouncil(p=0.50, spread=0.01))
@@ -111,3 +111,22 @@ def test_resolver_settles_open_trades():
     f.resolve_settled()
     row = f.journal._c.execute("SELECT status,outcome FROM trades WHERE status='resolved'").fetchone()
     assert row is not None and row["outcome"] == "yes"
+
+def test_tick_runs_in_worker_thread():
+    # B1 regression: the journal is touched from a worker thread (asyncio.to_thread) in prod.
+    import asyncio
+    f = _armed_floor(FakeCouncil(p=0.50, spread=0.01))
+    f._tick_n = f.DELIBERATE_EVERY - 1            # next tick triggers _council_eval
+    asyncio.run(asyncio.to_thread(f.tick))        # pre-fix: sqlite cross-thread error
+    assert f.journal._c.execute("SELECT COUNT(*) c FROM trades").fetchone()["c"] >= 1
+
+
+def test_daily_loss_halts_armed_trading():
+    f = _armed_floor(FakeCouncil(p=0.50, spread=0.01))
+    f.journal.log(market_id="KXOLD-1", title="t", side="no", converged_p=0.5, spread=0.01,
+                  market_price=0.5, executable_price=0.5, edge=0.1, contracts=100,
+                  fill_price=0.9, fee=0.0, fill_count=100, decision_reason="r", rationale="x")
+    f.journal.resolve("KXOLD-1", "yes")           # NO lost -> -$90 realized today
+    f._council_eval()
+    assert f.trader.orders == []                  # daily-loss cap blocks new armed trades
+    assert any("RISK BLOCKED" in a["s"] for a in f.activity)

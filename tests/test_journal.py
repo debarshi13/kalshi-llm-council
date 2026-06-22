@@ -77,3 +77,12 @@ def test_mirror_writes_note(tmp_path):
 def test_mirror_failure_is_silent():
     from council.trading.journal_mirror import mirror_trade
     mirror_trade("/nonexistent/\0bad", {"market_id": "X"})  # must not raise
+
+
+def test_realized_today():
+    import time as _t
+    j = Journal(":memory:", clock=_t.time)
+    _log(j, market_id="KXZ-1", side="no", contracts=10, fill_price=0.9, fee=0)
+    assert j.realized_today() == 0.0              # unresolved
+    j.resolve("KXZ-1", "yes")                     # NO lost: 10*(0-0.9) = -9
+    assert abs(j.realized_today() - (-9.0)) < 1e-9

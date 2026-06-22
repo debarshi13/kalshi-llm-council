@@ -4,8 +4,9 @@ This is the only module that can spend real money. It is inert unless explicitly
 armed (env COUNCIL_MODE=live + UI arm). Every order passes RiskGuard first; if any
 limit is breached, the order is refused and logged — never placed.
 
-The order-placement call is built from Kalshi's API spec but is UNVERIFIED against
-a live order. Test it against Kalshi's DEMO host before pointing it at real funds.
+The V2 order-placement call was VERIFIED against real fills on the production host
+(2026-06-21): a 1-contract NO order filled at the expected price/direction, and the armed
+council placed/filled real orders. The caps + kill switch remain the protection.
 """
 from __future__ import annotations
 

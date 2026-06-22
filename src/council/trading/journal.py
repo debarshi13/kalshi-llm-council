@@ -2,7 +2,9 @@
 true outcome once the market resolves. Pure + clock-injected for deterministic tests."""
 from __future__ import annotations
 
+import datetime
 import sqlite3
+import threading
 import time
 from typing import Callable
 
@@ -11,13 +13,24 @@ def _series(market_id: str) -> str:
     return market_id.split("-")[0]
 
 
+def _synchronized(fn):
+    """Serialize DB access — the journal is touched from the floor's worker tick thread."""
+    def wrapper(self, *a, **k):
+        with self._lock:
+            return fn(self, *a, **k)
+    return wrapper
+
+
 class Journal:
     _EDGE_BUCKETS = [("<5c", 0.0, 0.05), ("5-15c", 0.05, 0.15),
                      ("15-25c", 0.15, 0.25), (">25c", 0.25, 9.0)]
 
     def __init__(self, path: str = ":memory:", clock: Callable[[], float] = time.time) -> None:
         self.clock = clock
-        self._c = sqlite3.connect(path)
+        # The floor ticks in a worker thread (asyncio.to_thread) while it's built on the event
+        # loop — so the connection MUST allow cross-thread use, serialized by a lock.
+        self._lock = threading.RLock()
+        self._c = sqlite3.connect(path, check_same_thread=False)
         self._c.row_factory = sqlite3.Row
         self._c.execute("""CREATE TABLE IF NOT EXISTS trades(
             id INTEGER PRIMARY KEY AUTOINCREMENT, opened_ts REAL, market_id TEXT, series TEXT,
@@ -28,6 +41,7 @@ class Journal:
             outcome TEXT, realized_pnl REAL, council_correct INTEGER, resolved_ts REAL)""")
         self._c.commit()
 
+    @_synchronized
     def log(self, *, market_id, title, side, converged_p, spread, market_price,
             executable_price, edge, contracts, fill_price, fee, fill_count,
             decision_reason, rationale, status="placed") -> int:
@@ -42,10 +56,12 @@ class Journal:
         self._c.commit()
         return cur.lastrowid
 
+    @_synchronized
     def get(self, trade_id: int) -> dict | None:
         r = self._c.execute("SELECT * FROM trades WHERE id=?", (trade_id,)).fetchone()
         return dict(r) if r else None
 
+    @_synchronized
     def mark(self, market_id: str, yes_price: float) -> None:
         for r in self._c.execute(
                 "SELECT id,side,fill_price,contracts FROM trades WHERE market_id=? AND status='placed'",
@@ -57,6 +73,7 @@ class Journal:
                 (yes_price, self.clock(), unreal, r["id"]))
         self._c.commit()
 
+    @_synchronized
     def resolve(self, market_id: str, outcome: str) -> int:
         n = 0
         for r in self._c.execute(
@@ -73,6 +90,7 @@ class Journal:
         self._c.commit()
         return n
 
+    @_synchronized
     def calibration(self) -> dict:
         rows = self._c.execute(
             "SELECT edge,council_correct FROM trades WHERE status='resolved'").fetchall()
@@ -89,6 +107,7 @@ class Journal:
                     break
         return out
 
+    @_synchronized
     def recall(self, market_id: str) -> str:
         series = _series(market_id)
         sim = self._c.execute(
@@ -108,3 +127,14 @@ class Journal:
             lines.append(f"- Your >25c 'edges': {big['win']}/{big['n']} correct — treat large "
                          f"disagreements with the market as likely misreads.")
         return "\n".join(lines)
+
+    @_synchronized
+    def realized_today(self) -> float:
+        """Sum of realized P&L for trades that settled since local midnight — feeds the
+        daily-loss kill cap (which can't see real losses otherwise)."""
+        start = datetime.datetime.fromtimestamp(self.clock()).replace(
+            hour=0, minute=0, second=0, microsecond=0).timestamp()
+        r = self._c.execute(
+            "SELECT COALESCE(SUM(realized_pnl),0.0) AS p FROM trades "
+            "WHERE status='resolved' AND resolved_ts>=?", (start,)).fetchone()
+        return float(r["p"] or 0.0)
