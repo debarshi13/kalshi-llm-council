@@ -19,6 +19,7 @@ from datetime import date
 from ..models import ModelClient, ModelSpec
 from .analysts import MockResearch
 from .deliberation import DeliberativeCouncil, MockCouncil, decide
+from .scout import Scout, MockScout
 from .journal import Journal
 from .execution import KalshiTrader, RiskGuard
 from .ledger import kalshi_fee
@@ -85,6 +86,15 @@ class FloorState:
         # produces ONE consensus decision per market — same shape as LIVE.
         self.council = MockCouncil([self.books[k]["name"] for k in self.SPEAK_ORDER if k in self.books])
         self.research = MockResearch()
+        # Scout funnel: cheap pre-screen before expensive council debate.
+        self._scout_model = os.environ.get("SCOUT_MODEL", "openrouter/moonshotai/kimi-k2.6")
+        self._scout_shortlist = int(os.environ.get("SCOUT_SHORTLIST", 8))
+        self._scout_max_escalate = int(os.environ.get("SCOUT_MAX_ESCALATE", 1))
+        if self._scout_model:
+            self.scout = MockScout(shortlist_n=self._scout_shortlist,
+                                   max_escalate=self._scout_max_escalate)
+        else:
+            self.scout = None  # scout disabled — fallback to old cheap_score path
 
     # ── control ─────────────────────────────────────────────────────────────
     def enable_live(self, budget: float = 10.0) -> None:
@@ -93,6 +103,10 @@ class FloorState:
         specs = [ModelSpec(self.books[k]["slug"], "roundtable analyst")
                  for k in self.SPEAK_ORDER if k in self.books]
         self.council = DeliberativeCouncil(specs, client)
+        if self._scout_model:
+            self.scout = Scout(client=client, model=self._scout_model,
+                               shortlist_n=self._scout_shortlist,
+                               max_escalate=self._scout_max_escalate)
         if os.environ.get("COUNCIL_RESEARCH", "online").lower() == "online":
             self.research = WebSearchResearch(openrouter_online_search(client))
         else:

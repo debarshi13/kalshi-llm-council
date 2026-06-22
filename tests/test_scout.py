@@ -212,3 +212,32 @@ def test_mock_scout_empty_input():
     mock = MockScout(shortlist_n=8, max_escalate=1)
     assert mock.shortlist([]) == []
     assert mock.pick([], _journal()) == []
+
+
+def test_floor_init_has_mock_scout(monkeypatch):
+    """FloorState() in default paper mode wires a MockScout."""
+    monkeypatch.delenv("SCOUT_MODEL", raising=False)
+    from council.trading.floor import FloorState
+    from council.trading.scout import MockScout
+    f = FloorState()
+    assert isinstance(f.scout, MockScout)
+    assert f.scout.shortlist_n == 8
+    assert f.scout.max_escalate == 1
+
+
+def test_floor_init_custom_env(monkeypatch):
+    """FloorState reads SCOUT_SHORTLIST and SCOUT_MAX_ESCALATE from env."""
+    monkeypatch.setenv("SCOUT_SHORTLIST", "4")
+    monkeypatch.setenv("SCOUT_MAX_ESCALATE", "2")
+    from council.trading.floor import FloorState
+    f = FloorState()
+    assert f.scout.shortlist_n == 4
+    assert f.scout.max_escalate == 2
+
+
+def test_floor_init_scout_disabled(monkeypatch):
+    """SCOUT_MODEL="" disables the scout -- floor.scout is None."""
+    monkeypatch.setenv("SCOUT_MODEL", "")
+    from council.trading.floor import FloorState
+    f = FloorState()
+    assert f.scout is None
