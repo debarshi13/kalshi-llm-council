@@ -79,3 +79,106 @@ def test_shortlist_fewer_than_n():
     scout = Scout(client=ModelClient(), model="test/model", shortlist_n=8, max_escalate=1)
     result = scout.shortlist(markets)
     assert len(result) == 2
+
+
+from council.models import ModelClient, ModelSpec, Usage
+from council.trading.journal import Journal
+
+
+class _FakeScoutClient(ModelClient):
+    """Fake that captures the prompt and returns a canned response."""
+    def __init__(self, response: str):
+        super().__init__(budget_usd=100.0)
+        self.response = response
+        self.captured_messages: list[list[dict]] = []
+
+    def _invoke(self, spec, messages):
+        self.captured_messages.append(messages)
+        return self.response, Usage()
+
+
+def _journal():
+    return Journal(":memory:")
+
+
+def test_pick_flags_valid_market():
+    """pick() returns the matching Market when the scout flags a valid ticker."""
+    from council.trading.scout import Scout
+    client = _FakeScoutClient('{"escalate": ["MKT-A"]}')
+    scout = Scout(client=client, model="test/model", shortlist_n=8, max_escalate=1)
+    markets = [_m(id="MKT-A"), _m(id="MKT-B")]
+    result = scout.pick(markets, _journal())
+    assert len(result) == 1
+    assert result[0].id == "MKT-A"
+
+
+def test_pick_returns_empty_on_none():
+    """pick() returns [] when the scout says NONE."""
+    from council.trading.scout import Scout
+    client = _FakeScoutClient('{"escalate": []}')
+    scout = Scout(client=client, model="test/model", shortlist_n=8, max_escalate=1)
+    result = scout.pick([_m(id="MKT-A")], _journal())
+    assert result == []
+
+
+def test_pick_returns_empty_on_malformed():
+    """pick() returns [] (fail closed) on garbage response."""
+    from council.trading.scout import Scout
+    client = _FakeScoutClient("this is total garbage with no JSON at all")
+    scout = Scout(client=client, model="test/model", shortlist_n=8, max_escalate=1)
+    result = scout.pick([_m(id="MKT-A")], _journal())
+    assert result == []
+
+
+def test_pick_filters_hallucinated_ticker():
+    """pick() ignores market IDs not in the input list."""
+    from council.trading.scout import Scout
+    client = _FakeScoutClient('{"escalate": ["FAKE-TICKER"]}')
+    scout = Scout(client=client, model="test/model", shortlist_n=8, max_escalate=1)
+    result = scout.pick([_m(id="MKT-A")], _journal())
+    assert result == []
+
+
+def test_pick_caps_at_max_escalate():
+    """Even if the scout flags 5 markets, only max_escalate=1 is returned."""
+    from council.trading.scout import Scout
+    client = _FakeScoutClient('{"escalate": ["A", "B", "C", "D", "E"]}')
+    scout = Scout(client=client, model="test/model", shortlist_n=8, max_escalate=1)
+    markets = [_m(id=x) for x in "ABCDE"]
+    result = scout.pick(markets, _journal())
+    assert len(result) == 1
+    assert result[0].id == "A"
+
+
+def test_pick_empty_shortlist_no_api_call():
+    """pick([]) returns [] without making any API call."""
+    from council.trading.scout import Scout
+    client = _FakeScoutClient("should not be called")
+    scout = Scout(client=client, model="test/model", shortlist_n=8, max_escalate=1)
+    result = scout.pick([], _journal())
+    assert result == []
+    assert client.captured_messages == []
+
+
+def test_pick_injects_journal_calibration_and_recall():
+    """The prompt sent to the scout model contains journal calibration stats
+    and per-market recall lessons."""
+    from council.trading.scout import Scout
+    j = _journal()
+    # Seed the journal with a resolved trade so calibration + recall are non-empty
+    j.log(market_id="MKT-A", title="t", side="no", converged_p=0.34, spread=0.02,
+          market_price=0.93, executable_price=0.07, edge=0.10, contracts=3,
+          fill_price=0.07, fee=0.01, fill_count=3, decision_reason="r", rationale="x")
+    j.resolve("MKT-A", "yes")  # NO lost
+
+    client = _FakeScoutClient('{"escalate": []}')
+    scout = Scout(client=client, model="test/model", shortlist_n=8, max_escalate=1)
+    scout.pick([_m(id="MKT-A")], j)
+
+    # Flatten all message content into one string
+    all_text = " ".join(msg["content"] for conv in client.captured_messages for msg in conv)
+    # calibration() stats should appear
+    assert "overall" in all_text.lower() or "correct" in all_text.lower()
+    # recall(market_id) lessons should appear
+    assert "MKT" in all_text
+    assert "LESSONS" in all_text
