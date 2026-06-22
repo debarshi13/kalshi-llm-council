@@ -19,6 +19,7 @@ from datetime import date
 from ..models import ModelClient, ModelSpec
 from .analysts import MockResearch
 from .deliberation import DeliberativeCouncil, MockCouncil, decide
+from .scout import Scout, MockScout
 from .journal import Journal
 from .execution import KalshiTrader, RiskGuard
 from .ledger import kalshi_fee
@@ -85,6 +86,15 @@ class FloorState:
         # produces ONE consensus decision per market — same shape as LIVE.
         self.council = MockCouncil([self.books[k]["name"] for k in self.SPEAK_ORDER if k in self.books])
         self.research = MockResearch()
+        # Scout funnel: cheap pre-screen before expensive council debate.
+        self._scout_model = os.environ.get("SCOUT_MODEL", "openrouter/moonshotai/kimi-k2.6")
+        self._scout_shortlist = int(os.environ.get("SCOUT_SHORTLIST", 8))
+        self._scout_max_escalate = int(os.environ.get("SCOUT_MAX_ESCALATE", 1))
+        if self._scout_model:
+            self.scout = MockScout(shortlist_n=self._scout_shortlist,
+                                   max_escalate=self._scout_max_escalate)
+        else:
+            self.scout = None  # scout disabled — fallback to old cheap_score path
 
     # ── control ─────────────────────────────────────────────────────────────
     def enable_live(self, budget: float = 10.0) -> None:
@@ -93,6 +103,10 @@ class FloorState:
         specs = [ModelSpec(self.books[k]["slug"], "roundtable analyst")
                  for k in self.SPEAK_ORDER if k in self.books]
         self.council = DeliberativeCouncil(specs, client)
+        if self._scout_model:
+            self.scout = Scout(client=client, model=self._scout_model,
+                               shortlist_n=self._scout_shortlist,
+                               max_escalate=self._scout_max_escalate)
         if os.environ.get("COUNCIL_RESEARCH", "online").lower() == "online":
             self.research = WebSearchResearch(openrouter_online_search(client))
         else:
@@ -213,7 +227,21 @@ class FloorState:
             pool = list(markets)
         if not pool:
             return
-        m = max(pool, key=self.cheap_score)
+
+        # ── scout funnel (new) ─────────────────────────────────────────────
+        if self.scout is not None:
+            shortlist = self.scout.shortlist(pool)
+            escalated = self.scout.pick(shortlist, self.journal) if shortlist else []
+            if self.live and shortlist:
+                self.calls += 1  # one cheap scout call
+            if not escalated:
+                self._log("Scout: no candidates escalated — skipping debate")
+                return
+            m = escalated[0]
+        else:
+            # Backward compat: SCOUT_MODEL="" disables the scout
+            m = max(pool, key=self.cheap_score)
+
         self._council_seen.add(m.id)
         notes = self.research.context_for(m) if self.research else "No external signal available."
         lessons = self.journal.recall(m.id) if self.journal else ""
@@ -238,18 +266,15 @@ class FloorState:
                                   contracts=fill["count"],
                                   edge=abs(d.converged_p - m.yes_price), status="placed")
         elif self.live:
-            # LIVE but unarmed: book a PAPER position so the council can be evaluated
-            # on real prices without risking money (settles on the mock timer below).
             self.books["council"]["open"].append(
                 {"tk": m.id, "contracts": dec.contracts, "entry": entry,
                  "fee": kalshi_fee(entry, dec.contracts), "ttl": random.randint(2, 5)})
-            # paper fills do NOT consume MAX_TRADES_PER_DAY (that cap is for real spend)
             self._journal_log(m, d, dec, side=dec.side, fill_price=entry,
                               contracts=dec.contracts,
                               edge=abs(d.converged_p - m.yes_price), status="placed")
             self._log(f"PAPER FILL — Council {dec.side.upper()} {dec.contracts} {m.id} @ {dec.limit_price_cents}¢")
         else:
-            self._council_ticket(m, d, dec)   # free PAPER mode: one ticket to ship/reject
+            self._council_ticket(m, d, dec)
 
     def _journal_log(self, m, d, dec, *, side, fill_price, contracts, edge, status) -> None:
         if not self.journal:

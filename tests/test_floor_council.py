@@ -31,6 +31,7 @@ def _armed_floor(council):
     f.trader = FakeTrader()
     f.guard = RiskGuard(max_position_usd=5, max_total_exposure_usd=50, max_daily_loss_usd=20)
     f._live_markets = [Market("FED-DEC-CUT", "Fed cuts?", 0.62)]
+    f.scout = None  # disable scout funnel — these tests exercise the council directly
     return f
 
 def test_council_eval_places_real_order_on_consensus():
