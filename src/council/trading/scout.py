@@ -152,3 +152,29 @@ class Scout:
             if len(result) >= self.max_escalate:
                 break
         return result
+
+
+class MockScout:
+    """Offline stand-in for Scout -- produces mock shortlist/pick results with no API
+    calls, so the floor's free PAPER mode generates scout activity for the UI."""
+
+    def __init__(self, shortlist_n: int = 8, max_escalate: int = 1) -> None:
+        self.shortlist_n = shortlist_n
+        self.max_escalate = max_escalate
+
+    def shortlist(self, markets: list[Market]) -> list[Market]:
+        """Tier 0: same structural ranking as the real Scout."""
+        if not markets:
+            return []
+        ranked = sorted(markets, key=structural_score, reverse=True)
+        return ranked[:self.shortlist_n]
+
+    def pick(self, markets: list[Market], journal: Journal) -> list[Market]:
+        """Mock Tier 1: randomly returns 0 or up to max_escalate markets.
+        ~50% chance of returning nothing (mimics real scout NONE rate)."""
+        import random
+        if not markets:
+            return []
+        if random.random() < 0.5:
+            return []
+        return [random.choice(markets)][:self.max_escalate]

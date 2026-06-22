@@ -182,3 +182,33 @@ def test_pick_injects_journal_calibration_and_recall():
     # recall(market_id) lessons should appear
     assert "MKT" in all_text
     assert "LESSONS" in all_text
+
+
+def test_mock_scout_shortlist_returns_subset():
+    """MockScout.shortlist returns up to shortlist_n markets."""
+    from council.trading.scout import MockScout
+    markets = [_m(id=x) for x in "ABCDE"]
+    mock = MockScout(shortlist_n=3, max_escalate=1)
+    result = mock.shortlist(markets)
+    assert len(result) <= 3
+    assert all(m in markets for m in result)
+
+
+def test_mock_scout_pick_returns_at_most_max_escalate():
+    """MockScout.pick returns 0 or 1 markets (max_escalate=1), no API calls."""
+    from council.trading.scout import MockScout
+    markets = [_m(id="A"), _m(id="B")]
+    mock = MockScout(shortlist_n=8, max_escalate=1)
+    # Run multiple times to verify it never exceeds max_escalate
+    for _ in range(20):
+        result = mock.pick(markets, _journal())
+        assert len(result) <= 1
+        assert all(m in markets for m in result)
+
+
+def test_mock_scout_empty_input():
+    """MockScout handles empty inputs gracefully."""
+    from council.trading.scout import MockScout
+    mock = MockScout(shortlist_n=8, max_escalate=1)
+    assert mock.shortlist([]) == []
+    assert mock.pick([], _journal()) == []
