@@ -40,3 +40,42 @@ def test_structural_score_stale_price_high_volume():
     stale_busy = structural_score(_m(price=0.50, volume=50000))
     stale_quiet = structural_score(_m(price=0.50, volume=500))
     assert stale_busy > stale_quiet
+
+
+def test_shortlist_returns_top_n():
+    """shortlist(n=3) on 5 markets returns 3, best structural_score first."""
+    from council.trading.scout import Scout
+    from council.models import ModelClient
+    now = int(time.time())
+    markets = [
+        _m(id="A", price=0.50, volume=100, close_ts=now + 86400 * 7),
+        _m(id="B", price=0.05, volume=1000, close_ts=now + 3600),       # longshot + closing soon
+        _m(id="C", price=0.95, volume=2000, close_ts=now + 7200),       # near-cert + high vol
+        _m(id="D", price=0.50, volume=200, close_ts=now + 86400),
+        _m(id="E", price=0.50, volume=500, close_ts=now + 86400 * 3),
+    ]
+    scout = Scout(client=ModelClient(), model="test/model", shortlist_n=3, max_escalate=1)
+    result = scout.shortlist(markets)
+    assert len(result) == 3
+    ids = [m.id for m in result]
+    # B and C should be in top 3 (tail + urgency); A should NOT be (boring mid-price, far out)
+    assert "B" in ids and "C" in ids
+    assert "A" not in ids
+
+
+def test_shortlist_empty_pool():
+    """shortlist([]) returns []."""
+    from council.trading.scout import Scout
+    from council.models import ModelClient
+    scout = Scout(client=ModelClient(), model="test/model", shortlist_n=8, max_escalate=1)
+    assert scout.shortlist([]) == []
+
+
+def test_shortlist_fewer_than_n():
+    """When pool < shortlist_n, return all markets."""
+    from council.trading.scout import Scout
+    from council.models import ModelClient
+    markets = [_m(id="A"), _m(id="B")]
+    scout = Scout(client=ModelClient(), model="test/model", shortlist_n=8, max_escalate=1)
+    result = scout.shortlist(markets)
+    assert len(result) == 2

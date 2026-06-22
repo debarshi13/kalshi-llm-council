@@ -7,8 +7,12 @@ Three tiers:
 """
 from __future__ import annotations
 
+import json
+import re
 import time
 
+from ..models import ModelClient, ModelSpec
+from .journal import Journal
 from .market import Market
 
 
@@ -40,3 +44,21 @@ def structural_score(m: Market) -> float:
 
     # Equal weights (tunable later from journal data)
     return vol_score + tail_score + spread_score + urgency_score
+
+
+class Scout:
+    """Three-tier funnel: structural filter -> cheap LLM triage -> escalate."""
+
+    def __init__(self, client: ModelClient, model: str, shortlist_n: int, max_escalate: int) -> None:
+        self.client = client
+        self.model = model
+        self.shortlist_n = shortlist_n
+        self.max_escalate = max_escalate
+
+    def shortlist(self, markets: list[Market]) -> list[Market]:
+        """Tier 0: pure-Python structural ranking. No API calls.
+        Returns up to self.shortlist_n markets, best-first."""
+        if not markets:
+            return []
+        ranked = sorted(markets, key=structural_score, reverse=True)
+        return ranked[:self.shortlist_n]
