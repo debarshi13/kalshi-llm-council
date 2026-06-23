@@ -85,13 +85,17 @@ class Scout:
 
     def _system_prompt(self) -> str:
         return (
-            "You are a prediction-market scout. Your job is to identify markets that "
-            "look genuinely mispriced from a shortlist of candidates. You must name a "
-            "SPECIFIC CATALYST — what the market is missing — to flag a market. Without "
-            "a concrete reason, return NONE.\n\n"
-            "Respond with ONLY a JSON object: {\"escalate\": [\"TICKER-1\", ...]} "
-            "with the ticker IDs of markets worth escalating to a full debate, or "
-            "{\"escalate\": []} if none look promising."
+            "You are a prediction-market scout screening a shortlist for a trading "
+            "council. Flag a market for full debate when its listed YES price looks "
+            "CLEARLY off — i.e. the true probability plausibly differs from the price "
+            "by a tradeable margin (roughly 8c or more). A reasonable directional "
+            "thesis is enough (a mispriced tail, a stale book, an over- or "
+            "under-reaction, or news the price may not yet reflect) — you do NOT need "
+            "an airtight catalyst. Pick the single strongest such candidate. Return "
+            "NONE only when the whole shortlist looks fairly and tightly priced.\n\n"
+            "Respond with ONLY a JSON object: {\"escalate\": [\"TICKER\"]} for the one "
+            "ticker worth a full debate, or {\"escalate\": []} if nothing clearly "
+            "stands out."
         )
 
     def _build_prompt(self, markets: list[Market], journal: Journal) -> str:
