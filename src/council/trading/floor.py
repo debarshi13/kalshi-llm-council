@@ -72,7 +72,11 @@ class FloorState:
         # disagreement to tolerate. Looser = more trades, weaker edges.
         self.EDGE_THRESHOLD = float(os.environ.get("EDGE_THRESHOLD", 0.03))
         self.SPREAD_CAP = float(os.environ.get("SPREAD_CAP", 0.08))
-        self._council_seen: set[str] = set()
+        # Markets debated recently are skipped until this cooldown elapses, then become
+        # eligible again (prices move — a SKIP now may be a trade later). Sustains the
+        # escalation rate instead of permanently retiring everything it has looked at.
+        self.COUNCIL_COOLDOWN_SEC = int(os.environ.get("COUNCIL_COOLDOWN_MIN", 30)) * 60
+        self._council_seen_ts: dict[str, float] = {}   # market_id -> last-debated epoch
         self.journal = Journal(os.environ.get("JOURNAL_PATH", ":memory:"))
         self._last_fill = None
         self.MARK_EVERY = int(os.environ.get("MARK_EVERY", 20))
@@ -90,9 +94,11 @@ class FloorState:
         self._scout_model = os.environ.get("SCOUT_MODEL", "openrouter/moonshotai/kimi-k2.6")
         self._scout_shortlist = int(os.environ.get("SCOUT_SHORTLIST", 8))
         self._scout_max_escalate = int(os.environ.get("SCOUT_MAX_ESCALATE", 1))
+        self._scout_max_per_series = int(os.environ.get("SCOUT_MAX_PER_SERIES", 2))
         if self._scout_model:
             self.scout = MockScout(shortlist_n=self._scout_shortlist,
-                                   max_escalate=self._scout_max_escalate)
+                                   max_escalate=self._scout_max_escalate,
+                                   max_per_series=self._scout_max_per_series)
         else:
             self.scout = None  # scout disabled — fallback to old cheap_score path
 
@@ -106,7 +112,8 @@ class FloorState:
         if self._scout_model:
             self.scout = Scout(client=client, model=self._scout_model,
                                shortlist_n=self._scout_shortlist,
-                               max_escalate=self._scout_max_escalate)
+                               max_escalate=self._scout_max_escalate,
+                               max_per_series=self._scout_max_per_series)
         if os.environ.get("COUNCIL_RESEARCH", "online").lower() == "online":
             self.research = WebSearchResearch(openrouter_online_search(client))
         else:
@@ -217,15 +224,15 @@ class FloorState:
         if today != self._day:
             self._day = today
             self.trades_today = 0
-            self._council_seen.clear()
+            self._council_seen_ts.clear()
         if self.trades_today >= self.MAX_TRADES_PER_DAY:
             return
         markets = self._live_markets if self.live else self.markets
-        pool = [m for m in markets if m.id not in self._council_seen]
-        if not pool:                       # debated them all — rotate fresh
-            self._council_seen.clear()
-            pool = list(markets)
-        if not pool:
+        now = time.time()
+        # Skip markets debated within the cooldown; they re-enter once it elapses.
+        pool = [m for m in markets
+                if now - self._council_seen_ts.get(m.id, 0.0) >= self.COUNCIL_COOLDOWN_SEC]
+        if not pool:                       # everything debated recently — wait it out
             return
 
         # ── scout funnel (new) ─────────────────────────────────────────────
@@ -242,7 +249,7 @@ class FloorState:
             # Backward compat: SCOUT_MODEL="" disables the scout
             m = max(pool, key=self.cheap_score)
 
-        self._council_seen.add(m.id)
+        self._council_seen_ts[m.id] = now
         notes = self.research.context_for(m) if self.research else "No external signal available."
         lessons = self.journal.recall(m.id) if self.journal else ""
         d = self.council.debate(m, notes, lessons)

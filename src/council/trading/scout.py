@@ -46,22 +46,46 @@ def structural_score(m: Market) -> float:
     return vol_score + tail_score + spread_score + urgency_score
 
 
+def _series(market_id: str) -> str:
+    """Series prefix (e.g. KXBTCD-26JUN... -> KXBTCD). Same convention as the journal."""
+    return market_id.split("-")[0]
+
+
+def _diverse_shortlist(markets: list[Market], n: int, max_per_series: int) -> list[Market]:
+    """Rank by structural_score, best-first, capping how many markets from one series
+    make the cut so a single busy series (e.g. hourly BTC strikes) can't monopolize the
+    shortlist and starve the scout of variety. Diversity wins over filling n: if the cap
+    leaves fewer than n, that's fine — near-identical strikes add no signal."""
+    if not markets:
+        return []
+    out: list[Market] = []
+    per: dict[str, int] = {}
+    for m in sorted(markets, key=structural_score, reverse=True):
+        s = _series(m.id)
+        if per.get(s, 0) >= max_per_series:
+            continue
+        out.append(m)
+        per[s] = per.get(s, 0) + 1
+        if len(out) >= n:
+            break
+    return out
+
+
 class Scout:
     """Three-tier funnel: structural filter -> cheap LLM triage -> escalate."""
 
-    def __init__(self, client: ModelClient, model: str, shortlist_n: int, max_escalate: int) -> None:
+    def __init__(self, client: ModelClient, model: str, shortlist_n: int, max_escalate: int,
+                 max_per_series: int = 2) -> None:
         self.client = client
         self.model = model
         self.shortlist_n = shortlist_n
         self.max_escalate = max_escalate
+        self.max_per_series = max_per_series
 
     def shortlist(self, markets: list[Market]) -> list[Market]:
-        """Tier 0: pure-Python structural ranking. No API calls.
-        Returns up to self.shortlist_n markets, best-first."""
-        if not markets:
-            return []
-        ranked = sorted(markets, key=structural_score, reverse=True)
-        return ranked[:self.shortlist_n]
+        """Tier 0: pure-Python structural ranking, best-first, with a per-series cap.
+        No API calls. Returns up to self.shortlist_n markets."""
+        return _diverse_shortlist(markets, self.shortlist_n, self.max_per_series)
 
     def pick(self, markets: list[Market], journal: Journal) -> list[Market]:
         """Tier 1: one cheap LLM call over the Tier-0 shortlist.
@@ -162,16 +186,14 @@ class MockScout:
     """Offline stand-in for Scout -- produces mock shortlist/pick results with no API
     calls, so the floor's free PAPER mode generates scout activity for the UI."""
 
-    def __init__(self, shortlist_n: int = 8, max_escalate: int = 1) -> None:
+    def __init__(self, shortlist_n: int = 8, max_escalate: int = 1, max_per_series: int = 2) -> None:
         self.shortlist_n = shortlist_n
         self.max_escalate = max_escalate
+        self.max_per_series = max_per_series
 
     def shortlist(self, markets: list[Market]) -> list[Market]:
-        """Tier 0: same structural ranking as the real Scout."""
-        if not markets:
-            return []
-        ranked = sorted(markets, key=structural_score, reverse=True)
-        return ranked[:self.shortlist_n]
+        """Tier 0: same structural ranking + per-series cap as the real Scout."""
+        return _diverse_shortlist(markets, self.shortlist_n, self.max_per_series)
 
     def pick(self, markets: list[Market], journal: Journal) -> list[Market]:
         """Mock Tier 1: randomly returns 0 or up to max_escalate markets.

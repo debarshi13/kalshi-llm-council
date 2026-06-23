@@ -339,3 +339,58 @@ def test_funnel_backward_compat_scout_disabled(monkeypatch):
     f._council_eval()
     # Old path: picks max by cheap_score and debates it
     assert len(council.debated) == 1
+
+
+# ── series-diversity cap (stop one busy series monopolizing the shortlist) ──
+def test_shortlist_caps_per_series():
+    """No more than max_per_series markets from one series make the shortlist, so
+    hourly BTC strikes can't crowd out everything else."""
+    from council.trading.scout import Scout
+    from council.models import ModelClient
+    now = int(time.time())
+    # 5 high-scoring BTC strikes (same series) + 2 lower-scoring other-series markets
+    markets = [_m(id=f"KXBTCD-{i}", price=0.50, volume=50000, close_ts=now + 3600) for i in range(5)]
+    markets += [_m(id="KXFED-1", price=0.50, volume=1000, close_ts=now + 7200),
+                _m(id="KXCPI-1", price=0.50, volume=1000, close_ts=now + 7200)]
+    scout = Scout(client=ModelClient(), model="m", shortlist_n=5, max_escalate=1, max_per_series=2)
+    result = scout.shortlist(markets)
+    btc = [m for m in result if m.id.startswith("KXBTCD")]
+    assert len(btc) <= 2                                   # BTC capped
+    assert any(not m.id.startswith("KXBTCD") for m in result)  # other series get a look
+
+
+def test_shortlist_diversity_preserves_ranking_when_no_collision():
+    """With all-distinct series, the cap is inert — ranking is unchanged."""
+    from council.trading.scout import Scout
+    from council.models import ModelClient
+    now = int(time.time())
+    markets = [_m(id="A-1", price=0.50, volume=100, close_ts=now + 86400 * 7),
+               _m(id="B-1", price=0.05, volume=1000, close_ts=now + 3600),
+               _m(id="C-1", price=0.95, volume=2000, close_ts=now + 7200)]
+    scout = Scout(client=ModelClient(), model="m", shortlist_n=2, max_escalate=1, max_per_series=2)
+    ids = [m.id for m in scout.shortlist(markets)]
+    assert "B-1" in ids and "C-1" in ids and "A-1" not in ids
+
+
+# ── re-debate cooldown (sustain the rate; let prices move before revisiting) ──
+def test_cooldown_excludes_recently_debated():
+    """A market debated within the cooldown is not re-debated next cycle."""
+    council = _FakeCouncilForScout()
+    f = _floor_with_scout(_FixedScout(escalate_ids=["MKT-A"]), council=council)
+    f.COUNCIL_COOLDOWN_SEC = 1800
+    f._council_eval()
+    assert council.debated == ["MKT-A"]
+    f._council_eval()                       # MKT-A on cooldown; MKT-B not flagged
+    assert council.debated == ["MKT-A"]     # no second debate
+
+
+def test_cooldown_allows_redebate_after_expiry():
+    """Once the cooldown has elapsed, a market is eligible to be debated again."""
+    council = _FakeCouncilForScout()
+    f = _floor_with_scout(_FixedScout(escalate_ids=["MKT-A"]), council=council)
+    f.COUNCIL_COOLDOWN_SEC = 1000
+    f._council_eval()
+    assert council.debated == ["MKT-A"]
+    f._council_seen_ts["MKT-A"] -= 2000     # pretend the cooldown elapsed
+    f._council_eval()
+    assert council.debated == ["MKT-A", "MKT-A"]
