@@ -70,17 +70,17 @@ class KalshiTrader:
         }
 
     @staticmethod
-    def build_order(ticker: str, side: str, count: int, limit_price_cents: int) -> dict:
+    def build_order(ticker: str, side: str, count: int, limit_price_cents: int,
+                    action: str = "buy") -> dict:
         """Construct a Kalshi V2 order body. Pure — safe to unit-test offline.
 
-        V2 trades the YES leg only (side "bid"/"ask"), prices as dollar strings:
-          buy YES  -> bid at the YES price
-          buy NO   -> ask at the equivalent YES price (1 - no_price), since
-                      buying NO @ p is economically selling YES @ (1 - p).
-        immediate_or_cancel = take available liquidity now, never leave a resting order.
+        action="buy"  -> open/add: buy YES @bid, buy NO @ask (the verified shape; no action key)
+        action="sell" -> close: sell the side we hold, crossing into its bid; adds "action":"sell"
         """
         if side not in ("yes", "no"):
             raise ValueError(f"side must be yes/no, got {side!r}")
+        if action not in ("buy", "sell"):
+            raise ValueError(f"action must be buy/sell, got {action!r}")
         if count < 1:
             raise ValueError("count must be >= 1")
         cents = int(round(limit_price_cents))
@@ -90,7 +90,7 @@ class KalshiTrader:
             v2_side, price = "bid", cents / 100.0
         else:
             v2_side, price = "ask", (100 - cents) / 100.0
-        return {
+        body = {
             "ticker": ticker,
             "side": v2_side,
             "count": f"{int(count):.2f}",
@@ -99,13 +99,17 @@ class KalshiTrader:
             "self_trade_prevention_type": "taker_at_cross",
             "client_order_id": str(uuid.uuid4()),
         }
+        if action == "sell":
+            body["action"] = "sell"     # close an existing position; verified on demo (see plan Task 5)
+        return body
 
-    def place_order(self, ticker: str, side: str, count: int, limit_price_cents: int) -> dict:
-        """LIVE — spends real money. Posts to the Kalshi V2 create-order endpoint."""
+    def place_order(self, ticker: str, side: str, count: int, limit_price_cents: int,
+                    action: str = "buy") -> dict:
+        """LIVE — spends/realizes real money. Posts to the Kalshi V2 create-order endpoint."""
         import httpx
 
         path = self.PREFIX + self.ORDER_PATH
-        body = self.build_order(ticker, side, count, limit_price_cents)
+        body = self.build_order(ticker, side, count, limit_price_cents, action)
         resp = httpx.post(self.host + path, headers=self._signed_headers("POST", path), json=body, timeout=15)
         resp.raise_for_status()
         return resp.json()
