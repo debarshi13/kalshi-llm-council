@@ -48,7 +48,7 @@ class _FakeTrader:
     def __init__(self):
         self.placed = []
 
-    def place_order(self, ticker, side, count, price):
+    def place_order(self, ticker, side, count, price, action="buy"):
         self.placed.append((ticker, side, count, price))
         yes_px = price / 100.0 if side == "yes" else (100 - price) / 100.0
         return {"fill_count": str(count), "average_fill_price": f"{yes_px:.4f}"}

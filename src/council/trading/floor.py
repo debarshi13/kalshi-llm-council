@@ -102,6 +102,15 @@ class FloorState:
         else:
             self.scout = None  # scout disabled — fallback to old cheap_score path
 
+        # Exit layer — cheap, deterministic position management (no LLM calls).
+        from .exits import ExitParams
+        _sl = os.environ.get("EXIT_STOP_LOSS")
+        self._exit_params = ExitParams(
+            take_profit=float(os.environ.get("EXIT_TAKE_PROFIT", 0.05)),
+            exit_edge=float(os.environ.get("EXIT_EDGE", 0.01)),
+            stop_loss=float(_sl) if _sl else None,
+        )
+
     # ── control ─────────────────────────────────────────────────────────────
     def enable_live(self, budget: float = 10.0) -> None:
         client = ModelClient(budget_usd=budget)
@@ -181,6 +190,54 @@ class FloorState:
         self._last_fill = {"price": fill_px, "count": filled}   # for the journal
         self._log(f"LIVE ORDER FILLED — {bk['name']} {side.upper()} {filled} {m.id} @ {round(fill_px*100)}¢")
         return True
+
+    def _exit_eval(self) -> None:
+        """Each tick: price every open real position off a fresh quote and close it if a
+        trigger fires. Bypasses the risk guard — closing only reduces exposure."""
+        if not (self.live and self.execute and self.journal and not self.frozen):
+            return
+        md = self._md()
+        if not md:
+            return
+        from .exits import OpenPosition, exit_signal
+        for row in self.journal.open_positions():
+            try:
+                m = md.get_market(row["market_id"])
+            except Exception:  # noqa: BLE001 — pricing must never crash the loop
+                continue
+            if m is None:                       # can't price it this tick — skip
+                continue
+            pos = OpenPosition(trade_id=row["id"], market_id=row["market_id"], side=row["side"],
+                               entry_price=row["fill_price"], fair_value=row["converged_p"],
+                               contracts=row["contracts"], entry_fee=row["fee"] or 0.0)
+            sig = exit_signal(pos, m, self._exit_params)
+            if sig.should_exit:
+                self._place_exit(pos, m, sig)
+
+    def _place_exit(self, pos, m, sig) -> None:
+        """Cross the spread to SELL the side we hold, book the realized P&L, free exposure."""
+        if pos.side == "yes":
+            cross = round((m.yes_bid or sig.exit_price) * 100)
+        else:                                   # selling NO -> hit the NO bid (= 1 - yes_ask)
+            cross = round((1 - m.yes_ask if m.yes_ask else (1 - sig.exit_price)) * 100)
+        cross = min(99, max(1, int(cross)))
+        try:
+            resp = self.trader.place_order(pos.market_id, pos.side, pos.contracts, cross, action="sell")
+        except Exception as exc:  # noqa: BLE001 — never let a broker error crash the loop
+            self._log(f"EXIT ORDER FAILED — {pos.market_id}: {type(exc).__name__}")
+            return
+        filled = int(float((resp or {}).get("fill_count", 0) or 0))
+        if filled <= 0:
+            self._log(f"EXIT NO FILL — {pos.side.upper()} {pos.market_id} (limit didn't cross)")
+            return
+        yes_px = float((resp or {}).get("average_fill_price", cross / 100.0) or cross / 100.0)
+        exit_px = yes_px if pos.side == "yes" else round(1 - yes_px, 4)
+        realized = self.journal.record_exit(pos.trade_id, exit_px, kalshi_fee(exit_px, filled), filled)
+        self.books["council"]["open"] = [p for p in self.books["council"]["open"]
+                                         if p["tk"] != pos.market_id]
+        self._mirror(pos.trade_id)
+        self._log(f"EXIT FILLED — {pos.side.upper()} {filled} {pos.market_id} @ "
+                  f"{round(exit_px * 100)}¢ ({sig.reason}) realized ${realized:.2f}")
 
     def _load_live_markets(self) -> list:
         """Real, tradeable Kalshi markets — or [] (NEVER mock). In live mode the floor
@@ -323,6 +380,8 @@ class FloorState:
             return
         if self._tick_n % self.DELIBERATE_EVERY == 0:
             self._council_eval()       # one deliberation per interval — mock OR live
+        if self.execute:
+            self._exit_eval()                  # close positions that hit take-profit / edge-decay
         if self._tick_n % self.MARK_EVERY == 0:
             self.mark_open()           # mark-to-market the journal's open real positions
         if self._tick_n % self.RESOLVE_EVERY == 0:
