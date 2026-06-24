@@ -91,7 +91,7 @@ class Journal:
         return n
 
     @_synchronized
-    def open_positions(self):
+    def open_positions(self) -> list:
         """Rows for every still-open real position (status='placed'). The exit loop
         prices each against a live quote each tick."""
         return self._c.execute(
@@ -104,7 +104,7 @@ class Journal:
         """Close a position early. Realized P&L is booked in the side's own price terms
         (same convention as mark/resolve): contracts*(exit - entry) - entry_fee - exit_fee."""
         r = self._c.execute(
-            "SELECT fill_price,fee FROM trades WHERE id=?", (trade_id,)).fetchone()
+            "SELECT fill_price,fee FROM trades WHERE id=? AND status='placed'", (trade_id,)).fetchone()
         if r is None:
             return None
         realized = fill_count * (exit_price - r["fill_price"]) - (r["fee"] or 0.0) - exit_fee
@@ -160,5 +160,5 @@ class Journal:
             hour=0, minute=0, second=0, microsecond=0).timestamp()
         r = self._c.execute(
             "SELECT COALESCE(SUM(realized_pnl),0.0) AS p FROM trades "
-            "WHERE status='resolved' AND resolved_ts>=?", (start,)).fetchone()
+            "WHERE status IN ('resolved','exited') AND resolved_ts>=?", (start,)).fetchone()
         return float(r["p"] or 0.0)

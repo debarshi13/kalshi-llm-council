@@ -118,3 +118,23 @@ def test_record_exit_closes_row_and_realizes_pnl():
 def test_record_exit_unknown_id_returns_none():
     j = Journal(":memory:", clock=lambda: 1000.0)
     assert j.record_exit(999, 0.5, 0.0, 1) is None
+
+def test_record_exit_is_idempotent_on_already_exited():
+    j = Journal(":memory:", clock=lambda: 1000.0)
+    tid = j.log(market_id="A-1", title="t", side="yes", converged_p=0.6, spread=0.02,
+                market_price=0.5, executable_price=0.52, edge=0.08, contracts=10,
+                fill_price=0.50, fee=0.02, fill_count=10, decision_reason="r",
+                rationale="x", status="placed")
+    assert j.record_exit(tid, 0.58, 0.02, 10) is not None     # first close works
+    assert j.record_exit(tid, 0.40, 0.02, 10) is None         # second is a no-op
+    assert round(j.get(tid)["realized_pnl"], 4) == 0.76       # P&L not overwritten
+
+def test_realized_today_includes_exited():
+    import time as _t
+    j = Journal(":memory:", clock=_t.time)
+    tid = j.log(market_id="A-1", title="t", side="yes", converged_p=0.6, spread=0.02,
+                market_price=0.5, executable_price=0.52, edge=0.08, contracts=10,
+                fill_price=0.50, fee=0.0, fill_count=10, decision_reason="r",
+                rationale="x", status="placed")
+    j.record_exit(tid, 0.40, 0.0, 10)                          # realized -1.00 (a loss)
+    assert round(j.realized_today(), 2) == -1.00               # kill cap must see it
