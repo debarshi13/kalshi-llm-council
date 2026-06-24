@@ -48,7 +48,7 @@ class _FakeTrader:
     def __init__(self):
         self.placed = []
 
-    def place_order(self, ticker, side, count, price):
+    def place_order(self, ticker, side, count, price, action="buy"):
         self.placed.append((ticker, side, count, price))
         yes_px = price / 100.0 if side == "yes" else (100 - price) / 100.0
         return {"fill_count": str(count), "average_fill_price": f"{yes_px:.4f}"}
@@ -108,3 +108,27 @@ def test_arm_requires_live_mode(monkeypatch):
     monkeypatch.delenv("COUNCIL_MODE", raising=False)
     with pytest.raises(RuntimeError, match="COUNCIL_MODE"):
         FloorState().arm_execution()
+
+
+# --- new sell/close action path (Task 3) ------------------------------------
+def test_build_order_buy_is_unchanged_no_action_key():
+    b = KalshiTrader.build_order("X", "yes", 10, 62)        # default action="buy"
+    assert b["side"] == "bid" and b["price"] == "0.6200"
+    assert "action" not in b                                # buy body must stay byte-identical
+
+
+def test_build_order_sell_yes_carries_action_sell():
+    b = KalshiTrader.build_order("X", "yes", 10, 55, action="sell")
+    assert b["action"] == "sell"
+    assert b["side"] == "bid" and b["price"] == "0.5500"    # sell yes -> hit the yes bid
+    assert b["time_in_force"] == "immediate_or_cancel"
+
+
+def test_build_order_sell_no_carries_action_sell():
+    b = KalshiTrader.build_order("X", "no", 5, 40, action="sell")  # sell no @40c
+    assert b["action"] == "sell" and b["side"] == "ask" and b["price"] == "0.6000"
+
+
+def test_build_order_rejects_bad_action():
+    with pytest.raises(ValueError):
+        KalshiTrader.build_order("X", "yes", 1, 50, action="hold")

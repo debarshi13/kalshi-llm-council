@@ -15,7 +15,7 @@ class FakeResearch:
 
 class FakeTrader:
     def __init__(self, fill=True): self.orders = []; self.fill = fill
-    def place_order(self, ticker, side, count, cents):
+    def place_order(self, ticker, side, count, cents, action="buy"):
         self.orders.append((ticker, side, count, cents))
         n = count if self.fill else 0
         # average_fill_price is YES-terms (sell-YES for a NO order)
@@ -131,3 +131,52 @@ def test_daily_loss_halts_armed_trading():
     f._council_eval()
     assert f.trader.orders == []                  # daily-loss cap blocks new armed trades
     assert any("RISK BLOCKED" in a["s"] for a in f.activity)
+
+
+class FakeMD:
+    """Stands in for KalshiMarketData.get_market in exit pricing."""
+    def __init__(self, market): self._m = market
+    def get_market(self, mid): return self._m if self._m and self._m.id == mid else None
+
+def _armed_floor_with_open_yes():
+    f = FloorState()
+    f.live = True
+    f.execute = True
+    # an open YES position: 10 contracts @0.50, council fair value 0.62
+    f.journal.log(market_id="Z-1", title="t", side="yes", converged_p=0.62, spread=0.02,
+                  market_price=0.50, executable_price=0.52, edge=0.10, contracts=10,
+                  fill_price=0.50, fee=0.02, fill_count=10, decision_reason="r",
+                  rationale="x", status="placed")
+    f.books["council"]["open"].append({"tk": "Z-1", "contracts": 10, "entry": 0.50,
+                                        "fee": 0.02, "ttl": 9_999})
+    return f
+
+def test_exit_eval_closes_position_on_take_profit():
+    f = _armed_floor_with_open_yes()
+    # yes bid rose to 0.58 -> gain 0.08 >= default 0.05 take-profit
+    f._market_data = FakeMD(Market("Z-1", "t", yes_price=0.59, yes_bid=0.58, yes_ask=0.60))
+    f.trader = FakeTrader()                      # fills the sell
+    f._exit_eval()
+    row = f.journal.get(1)
+    assert row["status"] == "exited"
+    assert row["realized_pnl"] > 0                       # closed at a profit
+    assert f.journal.open_positions() == []
+    assert f.books["council"]["open"] == []             # exposure freed
+
+def test_exit_eval_holds_when_no_trigger():
+    f = _armed_floor_with_open_yes()
+    f._market_data = FakeMD(Market("Z-1", "t", yes_price=0.51, yes_bid=0.50, yes_ask=0.52))
+    f.trader = FakeTrader()
+    f._exit_eval()
+    assert f.journal.open_positions() and f.journal.get(1)["status"] == "placed"
+
+def test_exit_eval_does_not_consult_the_risk_guard():
+    # The exit path must never call guard.check (closing only reduces exposure). Make the
+    # guard raise if touched, then confirm the exit still completes.
+    f = _armed_floor_with_open_yes()
+    def _boom(*a, **k): raise AssertionError("exit path must not call guard.check")
+    f.guard.check = _boom
+    f._market_data = FakeMD(Market("Z-1", "t", yes_price=0.59, yes_bid=0.58, yes_ask=0.60))
+    f.trader = FakeTrader()
+    f._exit_eval()
+    assert f.journal.get(1)["status"] == "exited"               # exit not gated by the guard

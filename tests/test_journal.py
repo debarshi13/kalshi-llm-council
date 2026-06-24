@@ -86,3 +86,55 @@ def test_realized_today():
     assert j.realized_today() == 0.0              # unresolved
     j.resolve("KXZ-1", "yes")                     # NO lost: 10*(0-0.9) = -9
     assert abs(j.realized_today() - (-9.0)) < 1e-9
+
+
+def test_open_positions_lists_only_placed():
+    j = Journal(":memory:", clock=lambda: 1000.0)
+    j.log(market_id="A-1", title="t", side="yes", converged_p=0.6, spread=0.02,
+          market_price=0.5, executable_price=0.52, edge=0.08, contracts=10,
+          fill_price=0.52, fee=0.01, fill_count=10, decision_reason="r",
+          rationale="x", status="placed")
+    j.log(market_id="B-2", title="t", side="no", converged_p=0.3, spread=0.02,
+          market_price=0.4, executable_price=0.41, edge=0.05, contracts=5,
+          fill_price=0.59, fee=0.01, fill_count=5, decision_reason="r",
+          rationale="x", status="skipped")
+    rows = j.open_positions()
+    assert [r["market_id"] for r in rows] == ["A-1"]
+    assert rows[0]["fill_price"] == 0.52 and rows[0]["converged_p"] == 0.6
+
+def test_record_exit_closes_row_and_realizes_pnl():
+    j = Journal(":memory:", clock=lambda: 1000.0)
+    tid = j.log(market_id="A-1", title="t", side="yes", converged_p=0.6, spread=0.02,
+                market_price=0.5, executable_price=0.52, edge=0.08, contracts=10,
+                fill_price=0.50, fee=0.02, fill_count=10, decision_reason="r",
+                rationale="x", status="placed")
+    realized = j.record_exit(tid, exit_price=0.58, exit_fee=0.02, fill_count=10)
+    # 10 * (0.58 - 0.50) - 0.02 entry - 0.02 exit = 0.80 - 0.04 = 0.76
+    assert round(realized, 4) == 0.76
+    row = j.get(tid)
+    assert row["status"] == "exited" and round(row["realized_pnl"], 4) == 0.76
+    assert j.open_positions() == []   # no longer open
+
+def test_record_exit_unknown_id_returns_none():
+    j = Journal(":memory:", clock=lambda: 1000.0)
+    assert j.record_exit(999, 0.5, 0.0, 1) is None
+
+def test_record_exit_is_idempotent_on_already_exited():
+    j = Journal(":memory:", clock=lambda: 1000.0)
+    tid = j.log(market_id="A-1", title="t", side="yes", converged_p=0.6, spread=0.02,
+                market_price=0.5, executable_price=0.52, edge=0.08, contracts=10,
+                fill_price=0.50, fee=0.02, fill_count=10, decision_reason="r",
+                rationale="x", status="placed")
+    assert j.record_exit(tid, 0.58, 0.02, 10) is not None     # first close works
+    assert j.record_exit(tid, 0.40, 0.02, 10) is None         # second is a no-op
+    assert round(j.get(tid)["realized_pnl"], 4) == 0.76       # P&L not overwritten
+
+def test_realized_today_includes_exited():
+    import time as _t
+    j = Journal(":memory:", clock=_t.time)
+    tid = j.log(market_id="A-1", title="t", side="yes", converged_p=0.6, spread=0.02,
+                market_price=0.5, executable_price=0.52, edge=0.08, contracts=10,
+                fill_price=0.50, fee=0.0, fill_count=10, decision_reason="r",
+                rationale="x", status="placed")
+    j.record_exit(tid, 0.40, 0.0, 10)                          # realized -1.00 (a loss)
+    assert round(j.realized_today(), 2) == -1.00               # kill cap must see it

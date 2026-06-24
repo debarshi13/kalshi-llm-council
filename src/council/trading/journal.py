@@ -91,6 +91,30 @@ class Journal:
         return n
 
     @_synchronized
+    def open_positions(self) -> list:
+        """Rows for every still-open real position (status='placed'). The exit loop
+        prices each against a live quote each tick."""
+        return self._c.execute(
+            "SELECT id,market_id,side,fill_price,converged_p,contracts,fee "
+            "FROM trades WHERE status='placed'").fetchall()
+
+    @_synchronized
+    def record_exit(self, trade_id: int, exit_price: float, exit_fee: float,
+                    fill_count: int) -> float | None:
+        """Close a position early. Realized P&L is booked in the side's own price terms
+        (same convention as mark/resolve): contracts*(exit - entry) - entry_fee - exit_fee."""
+        r = self._c.execute(
+            "SELECT fill_price,fee FROM trades WHERE id=? AND status='placed'", (trade_id,)).fetchone()
+        if r is None:
+            return None
+        realized = fill_count * (exit_price - r["fill_price"]) - (r["fee"] or 0.0) - exit_fee
+        self._c.execute(
+            "UPDATE trades SET status='exited',realized_pnl=?,last_mark_price=?,resolved_ts=? "
+            "WHERE id=?", (realized, exit_price, self.clock(), trade_id))
+        self._c.commit()
+        return realized
+
+    @_synchronized
     def calibration(self) -> dict:
         rows = self._c.execute(
             "SELECT edge,council_correct FROM trades WHERE status='resolved'").fetchall()
@@ -136,5 +160,5 @@ class Journal:
             hour=0, minute=0, second=0, microsecond=0).timestamp()
         r = self._c.execute(
             "SELECT COALESCE(SUM(realized_pnl),0.0) AS p FROM trades "
-            "WHERE status='resolved' AND resolved_ts>=?", (start,)).fetchone()
+            "WHERE status IN ('resolved','exited') AND resolved_ts>=?", (start,)).fetchone()
         return float(r["p"] or 0.0)
