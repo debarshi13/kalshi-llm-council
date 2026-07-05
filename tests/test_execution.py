@@ -4,6 +4,7 @@ from council.trading.book import Estimate
 from council.trading.deliberation import Deliberation, ModelEstimate
 from council.trading.execution import KalshiTrader, RiskGuard
 from council.trading.floor import FloorState
+from council.trading.market import Market
 
 
 # --- order construction (pure, no network) ---------------------------------
@@ -65,11 +66,24 @@ class _FakeResearch:
     def context_for(self, market): return "notes"
 
 
+def _two_sided_markets():
+    # Mirrors floor.py's default watchlist but with a maker-viable two-sided book
+    # (decide() now requires bid/ask to post inside — see maker_price_cents).
+    return [
+        Market("FED-DEC-CUT", "Fed cuts rates in December?", 0.62, volume=120_000,
+               yes_bid=0.61, yes_ask=0.63),
+        Market("CPI-NOV-HOT", "November CPI above 3.2%?", 0.41, volume=45_000,
+               yes_bid=0.40, yes_ask=0.42),
+        Market("GOVT-SHUTDOWN", "US govt shutdown before year end?", 0.18, volume=8_000,
+               yes_bid=0.17, yes_ask=0.19),
+    ]
+
+
 def _armed_floor(guard):
     f = FloorState()
     f.council = _FakeCouncil()
     f.research = _FakeResearch()
-    f._live_markets = f.markets
+    f._live_markets = _two_sided_markets()
     f.live = True
     f.auto = True
     f.execute = True

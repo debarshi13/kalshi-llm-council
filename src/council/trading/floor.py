@@ -71,7 +71,8 @@ class FloorState:
         self.MAX_TRADES_PER_DAY = int(os.environ.get("MAX_TRADES_PER_DAY", 20))
         # Daytrade gate (env-tunable): how small an edge to act on, how much model
         # disagreement to tolerate. Looser = more trades, weaker edges.
-        self.EDGE_THRESHOLD = float(os.environ.get("EDGE_THRESHOLD", 0.03))
+        self.SPREAD_BUFFER = float(os.environ.get("SPREAD_BUFFER", 0.01))
+        self.MIN_PROFIT = float(os.environ.get("MIN_PROFIT", 0.01))
         self.SPREAD_CAP = float(os.environ.get("SPREAD_CAP", 0.08))
         # Markets debated recently are skipped until this cooldown elapses, then become
         # eligible again (prices move — a SKIP now may be a trade later). Sustains the
@@ -312,7 +313,8 @@ class FloorState:
         notes = self.research.context_for(m) if self.research else "No external signal available."
         lessons = self.journal.recall(m.id) if self.journal else ""
         d = self.council.debate(m, notes, lessons)
-        dec = decide(d, m, self.guard, edge_threshold=self.EDGE_THRESHOLD, spread_cap=self.SPREAD_CAP)
+        dec = decide(d, m, self.guard, spread_cap=self.SPREAD_CAP,
+                     spread_buffer=self.SPREAD_BUFFER, min_profit=self.MIN_PROFIT)
         self.last_debate = (d, dec)
         if self.live:
             self.calls += 1 + len(self.council.specs)  # 1 research + 1 turn per model (lean roundtable)

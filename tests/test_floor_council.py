@@ -30,14 +30,16 @@ def _armed_floor(council):
     f.research = FakeResearch()
     f.trader = FakeTrader()
     f.guard = RiskGuard(max_position_usd=5, max_total_exposure_usd=50, max_daily_loss_usd=20)
-    f._live_markets = [Market("FED-DEC-CUT", "Fed cuts?", 0.62)]
+    f._live_markets = [Market("FED-DEC-CUT", "Fed cuts?", 0.62, yes_bid=0.61, yes_ask=0.63)]
     f.scout = None  # disable scout funnel — these tests exercise the council directly
     return f
 
 def test_council_eval_places_real_order_on_consensus():
-    f = _armed_floor(FakeCouncil(p=0.50, spread=0.01))   # 12c NO edge, tight
+    f = _armed_floor(FakeCouncil(p=0.50, spread=0.01))   # 12c NO maker-edge, tight
     f._council_eval()
-    assert f.trader.orders == [("FED-DEC-CUT", "no", 8, 38)]   # conviction-scaled size (3c daytrade gate)
+    # _auto_execute still crosses the real book (taker, hits the bid at 39c) independent of
+    # decide()'s maker suggestion (38c = bid+1); full maker-order wiring lands in Task 9.
+    assert f.trader.orders == [("FED-DEC-CUT", "no", 8, 39)]   # conviction-scaled size
     assert f.last_debate is not None
     assert f.trades_today == 1
 

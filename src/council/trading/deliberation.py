@@ -13,7 +13,9 @@ from ..models import ModelClient, ModelSpec
 from .analysts import parse_estimate
 from .calibrate import extremize
 from .execution import RiskGuard
+from .ledger import required_edge
 from .market import Market
+from .selection import maker_price_cents
 
 
 @dataclass
@@ -43,34 +45,35 @@ class Decision:
 
 
 def decide(d: Deliberation, market: Market, caps: RiskGuard,
-           edge_threshold: float = 0.06, spread_cap: float = 0.05,
-           full_conviction_edge: float = 0.20) -> Decision:
-    # Executable prices: pay the ask to buy YES, hit the bid to sell (buy NO). Fall back to
-    # the mid when there's no live quote (keeps legacy behavior + existing tests stable).
-    ask = market.yes_ask or market.yes_price
-    bid = market.yes_bid or market.yes_price
-    yes_edge = d.converged_p - ask         # buy YES profit per contract
-    no_edge = bid - d.converged_p          # buy NO == sell YES at the bid
+           spread_cap: float = 0.05, spread_buffer: float = 0.01,
+           min_profit: float = 0.01, full_conviction_edge: float = 0.20) -> Decision:
+    """Maker-entry decision: post inside the spread; edge must clear the per-price fee gate."""
+    yes_cents = maker_price_cents(market, "yes")
+    no_cents = maker_price_cents(market, "no")
+    if yes_cents is None or no_cents is None:
+        return Decision(False, None, 0, 0, "no two-sided book to post inside -> SKIP")
+    yes_entry, no_entry = yes_cents / 100.0, no_cents / 100.0
+    yes_edge = d.converged_p - yes_entry            # buy YES resting at bid+1
+    no_edge = (1.0 - d.converged_p) - no_entry      # buy NO resting at (1-ask)+1
     if yes_edge >= no_edge:
-        side, edge, entry = "yes", yes_edge, ask
+        side, edge, entry, price_cents = "yes", yes_edge, yes_entry, yes_cents
     else:
-        side, edge, entry = "no", no_edge, round(1 - bid, 2)
-    price_cents = min(99, max(1, int(round(entry * 100))))
+        side, edge, entry, price_cents = "no", no_edge, no_entry, no_cents
     if d.spread > spread_cap:
         return Decision(False, None, 0, price_cents,
                         f"no consensus (spread {d.spread:.3f} > {spread_cap:.3f})")
-    if edge < edge_threshold:
+    need = required_edge(entry, 10, spread_buffer, min_profit)
+    if edge < need:
         return Decision(False, None, 0, price_cents,
-                        f"exec edge {edge*100:.1f}c < {edge_threshold*100:.0f}c threshold (vs live quote) -> SKIP")
-    # Conviction-scaled sizing on the EXECUTABLE edge (within RiskGuard caps).
-    span = max(full_conviction_edge - edge_threshold, 1e-9)
-    conviction = min(1.0, (edge - edge_threshold) / span)
+                        f"edge {edge*100:.1f}c < required {need*100:.1f}c (fee-aware @ {price_cents}c) -> SKIP")
+    span = max(full_conviction_edge - need, 1e-9)
+    conviction = min(1.0, (edge - need) / span)
     agreement = 1.0 - min(d.spread / spread_cap, 1.0)
     size_frac = 0.3 + 0.7 * conviction * agreement
     contracts = max(1, int((caps.max_position_usd * size_frac) / max(entry, 0.05)))
     return Decision(True, side, contracts, price_cents,
-                    f"{edge*100:.1f}c {side.upper()} exec-edge, spread {d.spread:.3f}, "
-                    f"size {size_frac*100:.0f}% -> PLACE")
+                    f"{edge*100:.1f}c {side.upper()} maker-edge (need {need*100:.1f}c), "
+                    f"spread {d.spread:.3f}, size {size_frac*100:.0f}% -> PLACE")
 
 
 import re

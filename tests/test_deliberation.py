@@ -5,8 +5,9 @@ from council.models import ModelSpec
 
 CAPS = RiskGuard(max_position_usd=5, max_total_exposure_usd=50, max_daily_loss_usd=20)
 
-def _delib(market_id, converged_p, spread):
-    return Deliberation(market_id, [], [], converged_p, spread, "")
+def _delib(p, spread=0.01):
+    est = [ModelEstimate("A", p, "t")]
+    return Deliberation("KXQ-1", est, est, p, spread)
 
 
 class RoundtableClient:
@@ -24,44 +25,44 @@ _PANEL = [ModelSpec("openrouter/anthropic/claude-opus-4.8", "g"),
           ModelSpec("openrouter/moonshotai/kimi-k2.6", "g")]   # Kimi speaks last
 
 def test_consensus_place_no_side():
-    m = Market("FED-DEC-CUT", "Fed cuts?", 0.62)
-    d = _delib(m.id, 0.533, 0.018)          # mean below price -> NO; tight spread
+    m = Market("FED-DEC-CUT", "Fed cuts?", 0.62, yes_bid=0.61, yes_ask=0.63)
+    d = _delib(0.533, 0.018)          # mean below price -> NO; tight spread
     out = decide(d, m, CAPS)
     assert out.place is True
     assert out.side == "no"
-    # NO entry = 1 - 0.62 = 0.38 -> 38c; conviction-scaled size (modest edge) -> 5 contracts
+    # NO maker entry = (1 - ask) + 1c = (1 - 0.63) + 0.01 = 0.38 -> 38c
     assert out.limit_price_cents == 38
-    assert out.contracts == 5
+    assert out.contracts == 6
 
 def test_conviction_sizing_scales_with_edge():
-    m = Market("X", "x?", 0.50)
-    small = decide(_delib(m.id, 0.58, 0.0), m, CAPS)   # 8c edge, full agreement
-    big = decide(_delib(m.id, 0.72, 0.0), m, CAPS)     # 22c edge -> full conviction
+    m = Market("X", "x?", 0.50, yes_bid=0.49, yes_ask=0.51)
+    small = decide(_delib(0.58, 0.0), m, CAPS)   # 8c maker-edge, full agreement
+    big = decide(_delib(0.72, 0.0), m, CAPS)     # 22c maker-edge -> full conviction
     assert small.place and big.place
     assert big.contracts > small.contracts             # bigger edge -> bigger bet (within cap)
 
 def test_consensus_place_yes_side():
-    m = Market("CPI-NOV-HOT", "CPI hot?", 0.41)
-    d = _delib(m.id, 0.52, 0.02)            # mean above price -> YES, 11c edge
+    m = Market("CPI-NOV-HOT", "CPI hot?", 0.41, yes_bid=0.39, yes_ask=0.41)
+    d = _delib(0.52, 0.02)            # mean above maker entry -> YES, 12c edge
     out = decide(d, m, CAPS)
     assert out.place is True and out.side == "yes"
-    assert out.limit_price_cents == 41
+    assert out.limit_price_cents == 40   # bid 39 + 1
 
 def test_high_spread_skips():
-    m = Market("X", "x?", 0.50)
-    d = _delib(m.id, 0.70, 0.12)            # big edge but no consensus
+    m = Market("X", "x?", 0.50, yes_bid=0.49, yes_ask=0.51)
+    d = _delib(0.70, 0.12)            # big edge but no consensus (deliberation spread)
     out = decide(d, m, CAPS)
     assert out.place is False and "consensus" in out.reason.lower()
 
 def test_subthreshold_edge_skips():
-    m = Market("X", "x?", 0.50)
-    d = _delib(m.id, 0.53, 0.01)            # 3c edge < 6c
+    m = Market("X", "x?", 0.50, yes_bid=0.49, yes_ask=0.51)
+    d = _delib(0.52, 0.01)            # 2c edge vs 50c entry < 2.5c fee-aware required edge
     out = decide(d, m, CAPS)
-    assert out.place is False and "threshold" in out.reason.lower()
+    assert out.place is False and "required" in out.reason.lower()
 
 def test_price_clamped_to_valid_range():
-    m = Market("X", "x?", 0.95)
-    d = _delib(m.id, 0.99, 0.0)             # YES, entry 0.95 -> 95c valid
+    m = Market("X", "x?", 0.95, yes_bid=0.94, yes_ask=0.96)
+    d = _delib(0.99, 0.0)             # YES, maker entry 0.95 -> 95c valid
     out = decide(d, m, CAPS)
     assert 1 <= out.limit_price_cents <= 99
 
@@ -95,21 +96,10 @@ def test_parse_prob_handles_p_yes_line_and_defers():
     assert _parse_prob("no number stated here", m) == 0.37   # defers to market price
 
 
-def test_decide_wide_spread_erases_edge_skips():
-    # mid looks like a 5c YES edge, but the ask is 0.70 -> no real edge -> SKIP (the T30 fix)
-    m = Market("X", "x?", 0.50, yes_bid=0.30, yes_ask=0.70)
-    out = decide(_delib(m.id, 0.55, 0.0), m, CAPS)
-    assert out.place is False
-
 def test_decide_tight_spread_places_executable():
     m = Market("X", "x?", 0.50, yes_bid=0.49, yes_ask=0.51)
-    out = decide(_delib(m.id, 0.62, 0.0), m, CAPS)   # 0.62 - 0.51 ask = 11c YES edge
+    out = decide(_delib(0.62, 0.0), m, CAPS)   # 0.62 - 0.50 maker entry = 12c YES edge
     assert out.place is True and out.side == "yes"
-
-def test_decide_falls_back_to_mid_without_quote():
-    m = Market("FED-DEC-CUT", "Fed cuts?", 0.62)     # no bid/ask -> mid fallback
-    out = decide(_delib(m.id, 0.533, 0.018), m, CAPS)
-    assert out.place is True and out.side == "no" and out.limit_price_cents == 38
 
 def test_debate_prompt_has_rules_in_both_rounds_but_quote_only_in_round2():
     client = RoundtableClient({s.model: 0.5 for s in _PANEL})
@@ -199,3 +189,23 @@ def test_all_unparseable_round1_yields_empty_round1_without_crash():
     d = council.debate(_mkt(), "notes")
     assert d.round1 == []                     # documented: may be empty; consumers guard
     assert len(d.round2) == 3 and d.converged_p == 0.65
+
+
+def test_decide_uses_maker_price_inside_spread():
+    m = Market("KXQ-1", "t", 0.80, volume=500, yes_bid=0.78, yes_ask=0.82)
+    dec = decide(_delib(0.90), m, RiskGuard())
+    assert dec.place and dec.side == "yes"
+    assert dec.limit_price_cents == 79     # bid 78 + 1, NOT the 82 ask
+
+
+def test_decide_fee_aware_threshold_blocks_thin_edge():
+    m = Market("KXQ-1", "t", 0.80, volume=500, yes_bid=0.78, yes_ask=0.82)
+    dec = decide(_delib(0.81), m, RiskGuard())   # 2c edge vs 79c entry < required
+    assert not dec.place
+    assert "required" in dec.reason
+
+
+def test_decide_skips_when_no_book():
+    m = Market("KXQ-1", "t", 0.80, volume=500)   # no bid/ask
+    dec = decide(_delib(0.90), m, RiskGuard())
+    assert not dec.place and "book" in dec.reason.lower()
