@@ -188,3 +188,14 @@ def test_mock_council_populates_round1():
     from council.trading.deliberation import MockCouncil
     d = MockCouncil(["A", "B", "C"]).debate(_mkt(), "notes")
     assert len(d.round1) == 3 and len(d.round2) == 3
+
+
+def test_all_unparseable_round1_yields_empty_round1_without_crash():
+    texts = ["no idea.", "cannot commit.", "unclear.",            # round 1: unparseable
+             "P(YES): 0.60", "P(YES): 0.70", "P(YES): 0.65"]      # round 2: fine
+    client = ScriptedClient(texts)
+    council = DeliberativeCouncil([ModelSpec("m/a", "x"), ModelSpec("m/b", "x"),
+                                   ModelSpec("m/c", "x")], client, alpha=1.0)
+    d = council.debate(_mkt(), "notes")
+    assert d.round1 == []                     # documented: may be empty; consumers guard
+    assert len(d.round2) == 3 and d.converged_p == 0.65

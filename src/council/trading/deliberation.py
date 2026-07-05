@@ -159,7 +159,11 @@ class DeliberativeCouncil:
     def debate(self, market: Market, notes: str, lessons: str = "") -> Deliberation:
         """Round 1: every model estimates BLIND (no price, no peers) — independent signal.
         Round 2: price + all blind estimates revealed; models may revise with a reason.
-        Converged = extremized MEDIAN of round 2 (median resists one outlier model)."""
+        Converged = extremized MEDIAN of round 2 (median resists one outlier model).
+
+        NOTE: round1 may be EMPTY if no model produced a parseable blind estimate
+        (i.e., lacked a 'P(YES): x' line). Consumers computing median(round1) must
+        guard: `blind_p = median(round1) if round1 else None`."""
         blind = _blind_block(market, notes, lessons)
         round1: list[ModelEstimate] = []
         for spec in self.specs:
