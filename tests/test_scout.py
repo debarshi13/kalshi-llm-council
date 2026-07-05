@@ -17,48 +17,55 @@ def test_structural_score_tail_detection():
     assert near_cert > mid
 
 
-def test_structural_score_wide_spread():
-    """Wide bid/ask spread scores higher than tight spread."""
+def test_structural_score_maker_viable_spread_beats_tight_or_wide():
+    """A spread inside the maker-viable band [0.02, 0.15] scores higher than a
+    spread too tight to post inside or too wide for a realistic resting fill."""
     from council.trading.scout import structural_score
-    tight = structural_score(_m(bid=0.49, ask=0.51))
-    wide = structural_score(_m(bid=0.30, ask=0.70))
-    assert wide > tight
+    viable = structural_score(_m(bid=0.45, ask=0.55))    # 0.10 spread — viable
+    tight = structural_score(_m(bid=0.499, ask=0.501))   # 0.002 spread — no room to post
+    wide = structural_score(_m(bid=0.20, ask=0.80))      # 0.60 spread — unrealistic fill
+    assert viable > tight
+    assert viable > wide
 
 
-def test_structural_score_closing_soon():
-    """Markets closing in hours score higher than those closing in days."""
+def test_structural_score_subhour_excluded():
+    """Sub-hour lotteries (e.g. hourly BTC strikes) are untradeable (-inf); markets
+    within the horizon are not."""
     from council.trading.scout import structural_score
     now = int(time.time())
-    soon = structural_score(_m(close_ts=now + 3600))       # 1 hour
-    later = structural_score(_m(close_ts=now + 86400 * 7)) # 7 days
-    assert soon > later
+    lottery = structural_score(_m(close_ts=now + 1800))       # 30 min
+    normal = structural_score(_m(close_ts=now + 86400 * 2))   # 2 days
+    assert lottery == float("-inf")
+    assert normal > float("-inf")
 
 
-def test_structural_score_stale_price_high_volume():
-    """High volume + mid price (not moved) scores higher than low volume."""
+def test_structural_score_prefers_weak_prices():
+    """Tail + thin volume + maker-viable spread outranks mid-price + heavy volume."""
     from council.trading.scout import structural_score
-    stale_busy = structural_score(_m(price=0.50, volume=50000))
-    stale_quiet = structural_score(_m(price=0.50, volume=500))
-    assert stale_busy > stale_quiet
+    weak = _m(id="KXA-1", price=0.90, volume=500, close_ts=int(time.time() + 48 * 3600),
+              bid=0.87, ask=0.93)
+    strong = _m(id="KXB-1", price=0.50, volume=100_000, close_ts=int(time.time() + 48 * 3600),
+                bid=0.49, ask=0.51)
+    assert structural_score(weak) > structural_score(strong)
 
 
 def test_shortlist_returns_top_n():
-    """shortlist(n=3) on 5 markets returns 3, best structural_score first."""
+    """shortlist(n=3) on 5 markets returns 3, best edge_score (weak-price) first."""
     from council.trading.scout import Scout
     from council.models import ModelClient
     now = int(time.time())
     markets = [
-        _m(id="A", price=0.50, volume=100, close_ts=now + 86400 * 7),
-        _m(id="B", price=0.05, volume=1000, close_ts=now + 3600),       # longshot + closing soon
-        _m(id="C", price=0.95, volume=2000, close_ts=now + 7200),       # near-cert + high vol
-        _m(id="D", price=0.50, volume=200, close_ts=now + 86400),
-        _m(id="E", price=0.50, volume=500, close_ts=now + 86400 * 3),
+        _m(id="A", price=0.50, volume=100_000, close_ts=now + 86400 * 3),                 # boring + heavy volume
+        _m(id="B", price=0.90, volume=500, close_ts=now + 86400 * 2, bid=0.87, ask=0.93),  # weak + thin + viable spread
+        _m(id="C", price=0.10, volume=800, close_ts=now + 86400 * 4, bid=0.07, ask=0.13),  # weak + thin + viable spread
+        _m(id="D", price=0.50, volume=200, close_ts=now + 86400 * 5),                     # boring, low-ish volume
+        _m(id="E", price=0.50, volume=50_000, close_ts=now + 86400 * 1),                  # boring + heavy volume
     ]
     scout = Scout(client=ModelClient(), model="test/model", shortlist_n=3, max_escalate=1)
     result = scout.shortlist(markets)
     assert len(result) == 3
     ids = [m.id for m in result]
-    # B and C should be in top 3 (tail + urgency); A should NOT be (boring mid-price, far out)
+    # B and C (weak-priced, thin, maker-viable spread) should be in top 3; A (boring, heavy volume) should not
     assert "B" in ids and "C" in ids
     assert "A" not in ids
 
@@ -365,7 +372,7 @@ def test_shortlist_diversity_preserves_ranking_when_no_collision():
     from council.models import ModelClient
     now = int(time.time())
     markets = [_m(id="A-1", price=0.50, volume=100, close_ts=now + 86400 * 7),
-               _m(id="B-1", price=0.05, volume=1000, close_ts=now + 3600),
+               _m(id="B-1", price=0.05, volume=1000, close_ts=now + 86400 * 2),
                _m(id="C-1", price=0.95, volume=2000, close_ts=now + 7200)]
     scout = Scout(client=ModelClient(), model="m", shortlist_n=2, max_escalate=1, max_per_series=2)
     ids = [m.id for m in scout.shortlist(markets)]

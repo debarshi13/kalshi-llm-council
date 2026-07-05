@@ -25,6 +25,7 @@ from .execution import KalshiTrader, RiskGuard
 from .ledger import kalshi_fee
 from .market import MockMarketData
 from .research import WebSearchResearch, openrouter_online_search
+from .selection import SelectionParams, edge_score, maker_price_cents
 
 # (book id, model name, key, mock-skill, OpenRouter slug, strategy prompt)
 BOOKS = [
@@ -109,6 +110,12 @@ class FloorState:
             take_profit=float(os.environ.get("EXIT_TAKE_PROFIT", 0.05)),
             exit_edge=float(os.environ.get("EXIT_EDGE", 0.01)),
             stop_loss=float(_sl) if _sl else None,
+        )
+
+        # Selection: hunt weak prices (tails, under-followed, maker-viable spreads).
+        self._sel_params = SelectionParams(
+            min_volume=self.MIN_VOLUME,
+            horizon_days=float(os.environ.get("EDGE_HORIZON_DAYS", 7)),
         )
 
     # ── control ─────────────────────────────────────────────────────────────
@@ -249,27 +256,22 @@ class FloorState:
         try:
             from .market import KalshiMarketData
             raw = KalshiMarketData(kid, pk).list_markets()
-            mk = [m for m in raw if 0.05 <= m.yes_price <= 0.95 and m.volume >= self.MIN_VOLUME]
-            # Target thin, under-followed (but tradeable) markets — cheap_score ranks them.
-            picks = sorted(mk, key=self.cheap_score, reverse=True)[:20]
+            mk = [m for m in raw if 0.03 <= m.yes_price <= 0.97]
+            picks = sorted((m for m in mk if edge_score(m, self._sel_params) > float("-inf")),
+                           key=lambda m: edge_score(m, self._sel_params), reverse=True)[:20]
             if picks:
-                self._log(f"loaded {len(picks)} live Kalshi markets (of {len(raw)} fetched, liquid-market focus)")
+                self._log(f"loaded {len(picks)} live Kalshi markets (of {len(raw)} fetched, weak-price focus)")
                 return picks
-            self._log(f"⚠ NO TRADEABLE LIVE MARKETS — {len(raw)} fetched, none cleared "
-                      f"vol≥{self.MIN_VOLUME} & price 0.05–0.95; live trading disabled.")
+            self._log(f"⚠ NO TRADEABLE LIVE MARKETS — {len(raw)} fetched, none cleared edge_score gates "
+                      f"(vol≥{self.MIN_VOLUME}, price 0.03–0.97, horizon)")
             return []
         except Exception as exc:  # noqa: BLE001
             self._log(f"⚠ Kalshi market load FAILED ({type(exc).__name__}: {exc}); live trading disabled.")
             return []
 
     def cheap_score(self, m) -> float:
-        """Daytrade ranking: liquid AND closing soon. Prefers markets with rich research
-        (volume) that resolve imminently (volume per hour-to-close), so the council acts on
-        fresh, fast-resolving bets. Below MIN_VOLUME a market is untradeable (-inf)."""
-        if m.volume < self.MIN_VOLUME:
-            return float("-inf")
-        hrs = max((m.close_ts - time.time()) / 3600.0, 0.25) if m.close_ts else 9999.0
-        return m.volume / hrs
+        """Fallback ranking when the scout is disabled — same weak-price scoring."""
+        return edge_score(m, self._sel_params)
 
     def _council_eval(self) -> None:
         # Token backstop only bounds LIVE (real-spend) mode; free mock runs unbounded.
