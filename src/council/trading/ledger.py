@@ -24,6 +24,26 @@ def kalshi_fee(price: float, contracts: int, rate: float = 0.07) -> float:
     return math.ceil(round(raw_cents, 6)) / 100.0
 
 
+MAKER_RATE_FRACTION = 0.25   # Kalshi maker fee = 25% of the taker rate
+
+
+def maker_fee(price: float, contracts: int, rate: float = 0.07) -> float:
+    """Maker-side Kalshi fee in dollars: 25% of the taker formula, ceil to next cent."""
+    raw_cents = MAKER_RATE_FRACTION * rate * contracts * price * (1.0 - price) * 100
+    return math.ceil(round(raw_cents, 6)) / 100.0
+
+
+def required_edge(price: float, contracts: int = 10, spread_buffer: float = 0.01,
+                  min_profit: float = 0.01) -> float:
+    """Per-contract edge (dollars) a maker entry at `price` must clear to be worth placing.
+
+    Fee is amortized over a nominal `contracts` size so the ceil-to-cent floor
+    doesn't flatten the tails-vs-mid fee difference the strategy depends on.
+    Settlement is fee-free on Kalshi, so only the entry fee is charged here.
+    """
+    return maker_fee(price, contracts) / max(contracts, 1) + spread_buffer + min_profit
+
+
 @dataclass
 class Trade:
     market_id: str
