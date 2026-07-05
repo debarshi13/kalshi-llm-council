@@ -44,6 +44,7 @@ class KalshiTrader:
     DEMO = "https://external-api.demo.kalshi.co"
     PREFIX = "/trade-api/v2"
     ORDER_PATH = "/portfolio/events/orders"   # V2 create-order (old /portfolio/orders is 410 deprecated)
+    ORDER_STATUS_PATH = "/portfolio/orders/{order_id}"   # GET = status, DELETE = cancel
 
     def __init__(self, key_id: str, private_key_path: str, host: str | None = None) -> None:
         self.key_id = key_id
@@ -71,16 +72,19 @@ class KalshiTrader:
 
     @staticmethod
     def build_order(ticker: str, side: str, count: int, limit_price_cents: int,
-                    action: str = "buy") -> dict:
+                    action: str = "buy", tif: str = "ioc") -> dict:
         """Construct a Kalshi V2 order body. Pure — safe to unit-test offline.
 
         action="buy"  -> open/add: buy YES @bid, buy NO @ask (the verified shape; no action key)
         action="sell" -> close: sell the side we hold, crossing into its bid; adds "action":"sell"
+        tif="ioc"     -> immediate_or_cancel (default); tif="gtc" omits time_in_force (resting order)
         """
         if side not in ("yes", "no"):
             raise ValueError(f"side must be yes/no, got {side!r}")
         if action not in ("buy", "sell"):
             raise ValueError(f"action must be buy/sell, got {action!r}")
+        if tif not in ("ioc", "gtc"):
+            raise ValueError(f"tif must be ioc/gtc, got {tif!r}")
         if count < 1:
             raise ValueError("count must be >= 1")
         cents = int(round(limit_price_cents))
@@ -95,22 +99,43 @@ class KalshiTrader:
             "side": v2_side,
             "count": f"{int(count):.2f}",
             "price": f"{price:.4f}",
-            "time_in_force": "immediate_or_cancel",
             "self_trade_prevention_type": "taker_at_cross",
             "client_order_id": str(uuid.uuid4()),
         }
+        if tif == "ioc":
+            body["time_in_force"] = "immediate_or_cancel"
+        # tif="gtc": omit time_in_force -> order rests on the book until filled/cancelled.
+        # VERIFY on the demo host before live (scripts/verify_maker_demo.py).
         if action == "sell":
             body["action"] = "sell"     # close an existing position; verified on demo (see plan Task 5)
         return body
 
     def place_order(self, ticker: str, side: str, count: int, limit_price_cents: int,
-                    action: str = "buy") -> dict:
+                    action: str = "buy", tif: str = "ioc") -> dict:
         """LIVE — spends/realizes real money. Posts to the Kalshi V2 create-order endpoint."""
         import httpx
 
         path = self.PREFIX + self.ORDER_PATH
-        body = self.build_order(ticker, side, count, limit_price_cents, action)
+        body = self.build_order(ticker, side, count, limit_price_cents, action, tif)
         resp = httpx.post(self.host + path, headers=self._signed_headers("POST", path), json=body, timeout=15)
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_order(self, order_id: str) -> dict:
+        """LIVE — order status incl. fill_count. GET /portfolio/orders/{id}."""
+        import httpx
+
+        path = self.PREFIX + self.ORDER_STATUS_PATH.format(order_id=order_id)
+        resp = httpx.get(self.host + path, headers=self._signed_headers("GET", path), timeout=15)
+        resp.raise_for_status()
+        return resp.json()
+
+    def cancel_order(self, order_id: str) -> dict:
+        """LIVE — pull a resting order off the book. DELETE /portfolio/orders/{id}."""
+        import httpx
+
+        path = self.PREFIX + self.ORDER_STATUS_PATH.format(order_id=order_id)
+        resp = httpx.delete(self.host + path, headers=self._signed_headers("DELETE", path), timeout=15)
         resp.raise_for_status()
         return resp.json()
 

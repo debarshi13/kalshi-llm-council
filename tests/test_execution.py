@@ -146,3 +146,25 @@ def test_build_order_sell_no_carries_action_sell():
 def test_build_order_rejects_bad_action():
     with pytest.raises(ValueError):
         KalshiTrader.build_order("X", "yes", 1, 50, action="hold")
+
+
+# --- resting GTC orders (Task 7) -----------------------------------------------
+def test_build_order_gtc_omits_time_in_force():
+    body = KalshiTrader.build_order("KXT-1", "yes", 5, 79, tif="gtc")
+    assert "time_in_force" not in body
+    assert body["side"] == "bid" and body["price"] == "0.7900"
+
+
+def test_build_order_default_stays_ioc():
+    body = KalshiTrader.build_order("KXT-1", "yes", 5, 79)
+    assert body["time_in_force"] == "immediate_or_cancel"
+
+
+def test_build_order_rejects_bad_tif():
+    with pytest.raises(ValueError):
+        KalshiTrader.build_order("KXT-1", "yes", 5, 79, tif="whenever")
+
+
+def test_order_status_paths():
+    t = KalshiTrader("kid", "/tmp/nope.pem")
+    assert t.ORDER_STATUS_PATH.format(order_id="abc") == "/portfolio/orders/abc"
