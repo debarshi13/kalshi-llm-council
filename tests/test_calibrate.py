@@ -16,6 +16,13 @@ def test_extremize_clamps_extremes():
     assert 0.0 < extremize(0.001, 2.0) < 1.0
 
 
+def test_extremize_extreme_alpha_stays_in_open_interval():
+    assert 0.0 < extremize(0.999999, 10.0) < 1.0
+    assert 0.0 < extremize(1e-6, 100.0) < 1.0      # must not raise OverflowError
+    assert 0.0 < extremize(0.9, 1000.0) < 1.0
+    assert 0.0 < extremize(0.1, 1000.0) < 1.0
+
+
 def test_brier():
     assert brier(0.8, 1) == round((0.8 - 1) ** 2, 10)
     assert brier(0.8, 0) == round(0.8 ** 2, 10)
