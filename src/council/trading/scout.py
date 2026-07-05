@@ -31,12 +31,18 @@ def _diverse_shortlist(markets: list[Market], n: int, max_per_series: int) -> li
     """Rank by structural_score, best-first, capping how many markets from one series
     make the cut so a single busy series (e.g. hourly BTC strikes) can't monopolize the
     shortlist and starve the scout of variety. Diversity wins over filling n: if the cap
-    leaves fewer than n, that's fine — near-identical strikes add no signal."""
+    leaves fewer than n, that's fine — near-identical strikes add no signal.
+    Filters out untradeable markets (scoring -inf: sub-hour, below min volume, or beyond horizon)."""
     if not markets:
         return []
+    # Precompute scores and filter out untradeable (-inf) markets
+    scored = [(structural_score(m), m) for m in markets]
+    scored = [(score, m) for score, m in scored if score != float("-inf")]
+    scored.sort(key=lambda x: x[0], reverse=True)
+
     out: list[Market] = []
     per: dict[str, int] = {}
-    for m in sorted(markets, key=structural_score, reverse=True):
+    for _, m in scored:
         s = _series(m.id)
         if per.get(s, 0) >= max_per_series:
             continue

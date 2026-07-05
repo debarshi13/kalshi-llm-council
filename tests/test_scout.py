@@ -349,6 +349,21 @@ def test_funnel_backward_compat_scout_disabled(monkeypatch):
 
 
 # ── series-diversity cap (stop one busy series monopolizing the shortlist) ──
+def test_shortlist_excludes_untradeable_markets():
+    """_diverse_shortlist filters out markets scoring -inf (untradeable: below min volume,
+    sub-hour, or beyond horizon)."""
+    import math
+    from council.trading.scout import _diverse_shortlist, structural_score
+    now = int(time.time())
+    tradeable = _m(id="KXFED-1", price=0.90, volume=500, close_ts=now + 48 * 3600,
+                   bid=0.87, ask=0.93)
+    subhour = _m(id="KXBTCD-1", price=0.50, volume=500, close_ts=now + 1800)
+    thin = _m(id="KXCPI-1", price=0.50, volume=5, close_ts=now + 48 * 3600)
+    assert structural_score(subhour) == -math.inf and structural_score(thin) == -math.inf
+    out = _diverse_shortlist([tradeable, subhour, thin], n=8, max_per_series=2)
+    assert out == [tradeable]
+
+
 def test_shortlist_caps_per_series():
     """No more than max_per_series markets from one series make the shortlist, so
     hourly BTC strikes can't crowd out everything else."""
@@ -356,9 +371,10 @@ def test_shortlist_caps_per_series():
     from council.models import ModelClient
     now = int(time.time())
     # 5 high-scoring BTC strikes (same series) + 2 lower-scoring other-series markets
-    markets = [_m(id=f"KXBTCD-{i}", price=0.50, volume=50000, close_ts=now + 3600) for i in range(5)]
-    markets += [_m(id="KXFED-1", price=0.50, volume=1000, close_ts=now + 7200),
-                _m(id="KXCPI-1", price=0.50, volume=1000, close_ts=now + 7200)]
+    # Use now + 48*3600 for tradeable horizon (instead of now + 3600 which is sub-hour)
+    markets = [_m(id=f"KXBTCD-{i}", price=0.50, volume=50000, close_ts=now + 48 * 3600) for i in range(5)]
+    markets += [_m(id="KXFED-1", price=0.50, volume=1000, close_ts=now + 48 * 3600),
+                _m(id="KXCPI-1", price=0.50, volume=1000, close_ts=now + 48 * 3600)]
     scout = Scout(client=ModelClient(), model="m", shortlist_n=5, max_escalate=1, max_per_series=2)
     result = scout.shortlist(markets)
     btc = [m for m in result if m.id.startswith("KXBTCD")]
