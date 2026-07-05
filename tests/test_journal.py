@@ -138,3 +138,58 @@ def test_realized_today_includes_exited():
                 rationale="x", status="placed")
     j.record_exit(tid, 0.40, 0.0, 10)                          # realized -1.00 (a loss)
     assert round(j.realized_today(), 2) == -1.00               # kill cap must see it
+
+
+def _log_cal(j, status, converged=0.9, market=0.8, blind=None, mid="KXC-1"):
+    return j.log(market_id=mid, title="t", side="yes", converged_p=converged, spread=0.01,
+                 market_price=market, executable_price=0.81, edge=converged - market,
+                 contracts=5, fill_price=0.81 if status == "placed" else 0.0,
+                 fee=0.01, fill_count=5 if status == "placed" else 0,
+                 decision_reason="r", rationale="x", status=status, blind_p=blind)
+
+
+def test_resolve_also_resolves_skipped_predictions():
+    j = Journal(":memory:")
+    _log_cal(j, "skipped", converged=0.9, market=0.8)
+    j.resolve("KXC-1", "yes")
+    r = j._c.execute("SELECT status, outcome FROM trades").fetchone()
+    assert r["status"] == "resolved_skip" and r["outcome"] == "yes"
+
+
+def test_working_orders_cancel_on_resolution_and_never_score():
+    j = Journal(":memory:")
+    _log_cal(j, "working")
+    j.resolve("KXC-1", "no")
+    assert j._c.execute("SELECT status FROM trades").fetchone()["status"] == "cancelled"
+    assert j.calibration_report()["n"] == 0
+
+
+def test_mark_filled_and_cancel_lifecycle():
+    j = Journal(":memory:")
+    tid = _log_cal(j, "working")
+    j.mark_filled(tid, 0.79, 0.02, 5)
+    r = j.get(tid)
+    assert r["status"] == "placed" and r["fill_price"] == 0.79 and r["fill_count"] == 5
+    tid2 = _log_cal(j, "working", mid="KXC-2")
+    j.cancel(tid2)
+    assert j.get(tid2)["status"] == "cancelled"
+
+
+def test_calibration_report_brier_vs_market():
+    j = Journal(":memory:")
+    # model says 0.9, market 0.6, outcome YES -> model brier 0.01, market 0.16
+    _log_cal(j, "skipped", converged=0.9, market=0.6, blind=0.85)
+    j.resolve("KXC-1", "yes")
+    rep = j.calibration_report(min_n=1)
+    assert rep["n"] == 1
+    assert abs(rep["brier_model"] - 0.01) < 1e-9
+    assert abs(rep["brier_market"] - 0.16) < 1e-9
+    assert abs(rep["brier_blind"] - 0.0225) < 1e-9
+    assert rep["beats_market"] is True
+
+
+def test_calibration_report_needs_min_n():
+    j = Journal(":memory:")
+    _log_cal(j, "skipped", converged=0.9, market=0.6)
+    j.resolve("KXC-1", "yes")
+    assert j.calibration_report(min_n=50)["beats_market"] is False
