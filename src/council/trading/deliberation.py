@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 from ..models import ModelClient, ModelSpec
 from .analysts import parse_estimate
+from .calibrate import extremize
 from .execution import RiskGuard
 from .market import Market
 
@@ -76,15 +77,23 @@ import re
 
 _PYES_RE = re.compile(r"p\s*\(?\s*yes\s*\)?\s*[:=]\s*([01]?\.?\d+)\s*(%?)", re.I)
 
-_ROUNDTABLE_SYS = (
-    "You are {name}, one of three sharp prediction-market analysts at a roundtable with "
-    "Claude, GPT-5.4, and Kimi K2. You are pricing ONE market together. The CURRENT MARKET "
-    "PRICE is a STRONG PRIOR — it already reflects the crowd and informed traders. Only "
-    "deviate materially from it if you can name a SPECIFIC CATALYST the market is missing; "
-    "absent a concrete reason, converge toward the price. Read the resolution rules carefully "
-    "(misreading the threshold or direction is the most common, costly error). Read the "
-    "research and what your colleagues have said, engage directly (agree, push back, refine), "
-    "keep it to 2-3 sentences, and END with a line exactly:\nP(YES): <number between 0 and 1>"
+_BLIND_SYS = (
+    "You are {name}, a sharp prediction-market analyst. Estimate the probability that "
+    "the market below resolves YES, using ONLY the resolution rules, the research notes, "
+    "and your own knowledge. You are deliberately NOT shown the market price — form an "
+    "independent view. Read the resolution rules carefully (misreading the threshold or "
+    "direction is the most common, costly error). 2-3 sentences of reasoning, then END "
+    "with a line exactly:\nP(YES): <number between 0 and 1>"
+)
+
+_CONVERGE_SYS = (
+    "You are {name}, at a roundtable with two other analysts. You all just estimated this "
+    "market blind; now the market price and everyone's blind estimates are revealed. The "
+    "price is ONE input: it reflects the crowd, but thin or under-followed books can be "
+    "stale or biased. Revise your estimate only for a SPECIFIC stated reason (a rule "
+    "misread, information a colleague raised, or a crowd bias you can name) — do not "
+    "reflexively defer to the price, and do not move just to agree. 2-3 sentences, then "
+    "END with a line exactly:\nP(YES): <number between 0 and 1>"
 )
 
 
@@ -96,6 +105,13 @@ def _market_block(market: Market, notes: str, lessons: str = "") -> str:
     return (f"Market: {market.title} (ticker {market.id})\n"
             f"Current YES price: {market.yes_price:.2f}\n"
             f"{quote}{rules}{les}Research notes:\n{notes}\n")
+
+
+def _blind_block(market: Market, notes: str, lessons: str = "") -> str:
+    rules = f"Resolution rules: {market.rules}\n" if market.rules else ""
+    les = f"{lessons}\n" if lessons else ""
+    return (f"Market: {market.title} (ticker {market.id})\n"
+            f"{rules}{les}Research notes:\n{notes}\n")
 
 
 def _name_for(slug: str) -> str:
@@ -122,32 +138,57 @@ def _parse_prob(text: str, market: Market) -> float:
     return parse_estimate(text, market).prob_yes
 
 
+def _parse_prob_blind(text: str) -> float | None:
+    """Blind-round parser: NEVER falls back to the market price."""
+    matches = _PYES_RE.findall(text)
+    if not matches:
+        return None
+    val, pct = matches[-1]
+    p = float(val)
+    if pct or p > 1:
+        p /= 100.0
+    return min(max(p, 0.0), 1.0)
+
+
 class DeliberativeCouncil:
-    def __init__(self, specs: list[ModelSpec], client: ModelClient) -> None:
+    def __init__(self, specs: list[ModelSpec], client: ModelClient, alpha: float = 1.3) -> None:
         self.specs = specs            # speaking order; the most capable model should be last
         self.client = client
+        self.alpha = alpha            # extremization strength (EXTREMIZE_ALPHA)
 
     def debate(self, market: Market, notes: str, lessons: str = "") -> Deliberation:
-        """A real roundtable: each model speaks once, in order, seeing the full conversation
-        so far. The system+research prefix is identical across turns (cache-friendly); the
-        growing transcript rides in the user message. The last speaker hears everyone."""
-        prefix = _market_block(market, notes, lessons)
-        transcript: list[ModelEstimate] = []
-        convo = ""
+        """Round 1: every model estimates BLIND (no price, no peers) — independent signal.
+        Round 2: price + all blind estimates revealed; models may revise with a reason.
+        Converged = extremized MEDIAN of round 2 (median resists one outlier model)."""
+        blind = _blind_block(market, notes, lessons)
+        round1: list[ModelEstimate] = []
         for spec in self.specs:
             name = _name_for(spec.model)
-            system = _ROUNDTABLE_SYS.format(name=name) + "\n\n" + prefix
-            user = (convo or "You speak first — open the discussion.") + \
-                   f"\n\nYou are {name}. Give your take and end with 'P(YES): <0-1>'."
+            system = _BLIND_SYS.format(name=name) + "\n\n" + blind
             text, _ = self.client.complete(
-                spec, [{"role": "system", "content": system}, {"role": "user", "content": user}])
+                spec, [{"role": "system", "content": system},
+                       {"role": "user", "content": f"You are {name}. Give your independent estimate."}])
             msg = text.strip()
-            transcript.append(ModelEstimate(name, _parse_prob(msg, market), msg))
-            convo += f"\n{name}: {msg}\n"
-        ps = [t.p_yes for t in transcript]
-        converged = sum(ps) / len(ps)
+            p = _parse_prob_blind(msg)
+            if p is not None:                       # unparseable blind turn adds no signal
+                round1.append(ModelEstimate(name, p, msg))
+
+        reveal = _market_block(market, notes, lessons) + "\nBlind estimates:\n" + \
+            "\n".join(f"- {e.model}: P(YES) {e.p_yes:.2f} — {e.thesis}" for e in round1)
+        round2: list[ModelEstimate] = []
+        for spec in self.specs:
+            name = _name_for(spec.model)
+            system = _CONVERGE_SYS.format(name=name) + "\n\n" + reveal
+            text, _ = self.client.complete(
+                spec, [{"role": "system", "content": system},
+                       {"role": "user", "content": f"You are {name}. Give your final estimate."}])
+            msg = text.strip()
+            round2.append(ModelEstimate(name, _parse_prob(msg, market), msg))
+
+        ps = [t.p_yes for t in round2]
+        converged = extremize(statistics.median(ps), self.alpha)
         spread = statistics.pstdev(ps) if len(ps) > 1 else 0.0
-        return Deliberation(market.id, [], transcript, round(converged, 4), round(spread, 4), notes)
+        return Deliberation(market.id, round1, round2, round(converged, 4), round(spread, 4), notes)
 
 
 class MockCouncil:
@@ -161,12 +202,13 @@ class MockCouncil:
 
     def debate(self, market: Market, notes: str, lessons: str = "") -> Deliberation:
         import random
-        base = market.yes_price
-        transcript: list[ModelEstimate] = []
-        for name in self.specs:           # speaking order (Kimi last, as the floor builds it)
-            p = round(min(max(base + random.gauss(0, 0.08), 0.02), 0.98), 3)
-            transcript.append(ModelEstimate(name, p, f"{name}: I read this around {p:.0%}. P(YES): {p:.2f}"))
-        ps = [t.p_yes for t in transcript]
+        round1 = [ModelEstimate(n, round(min(max(0.5 + random.gauss(0, 0.15), 0.02), 0.98), 3),
+                                f"{n}: blind take.") for n in self.specs]
+        round2 = []
+        for name in self.specs:
+            p = round(min(max(market.yes_price + random.gauss(0, 0.08), 0.02), 0.98), 3)
+            round2.append(ModelEstimate(name, p, f"{name}: I read this around {p:.0%}. P(YES): {p:.2f}"))
+        ps = [t.p_yes for t in round2]
         converged = sum(ps) / len(ps)
         spread = statistics.pstdev(ps) if len(ps) > 1 else 0.0
-        return Deliberation(market.id, [], transcript, round(converged, 4), round(spread, 4), notes)
+        return Deliberation(market.id, round1, round2, round(converged, 4), round(spread, 4), notes)

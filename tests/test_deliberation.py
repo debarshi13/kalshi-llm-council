@@ -65,24 +65,27 @@ def test_price_clamped_to_valid_range():
     out = decide(d, m, CAPS)
     assert 1 <= out.limit_price_cents <= 99
 
-def test_roundtable_one_shared_conversation_kimi_last():
+def test_roundtable_two_rounds_kimi_last():
     probs = {_PANEL[0].model: 0.58, _PANEL[1].model: 0.54, _PANEL[2].model: 0.52}
     client = RoundtableClient(probs)
     m = Market("FED-DEC-CUT", "Fed cuts?", 0.62)
-    d = DeliberativeCouncil(_PANEL, client).debate(m, "Jobs report hot.")
-    assert len(client.messages) == 3            # ONE turn each, not 6 isolated calls
-    assert len(d.round2) == 3
+    d = DeliberativeCouncil(_PANEL, client, alpha=1.0).debate(m, "Jobs report hot.")
+    assert len(client.messages) == 6            # 3 blind turns + 3 reveal turns
+    assert len(d.round1) == 3 and len(d.round2) == 3
     assert d.round2[-1].model == "Kimi K2"      # most-capable model closes the debate
-    assert abs(d.converged_p - (0.58+0.54+0.52)/3) < 1e-4
+    assert d.converged_p == statistics.median([0.58, 0.54, 0.52])   # alpha=1.0 -> no extremization
     assert d.spread > 0
 
-def test_later_speakers_see_earlier_turns():
+def test_round2_reveals_all_round1_blind_estimates_to_every_speaker():
     client = RoundtableClient({s.model: 0.5 for s in _PANEL})
     DeliberativeCouncil(_PANEL, client).debate(Market("X", "x?", 0.5), "notes")
-    first_prompt = client.messages[0][-1]["content"]
-    last_prompt = client.messages[-1][-1]["content"]
-    assert "speak first" in first_prompt.lower()         # opener has no transcript yet
-    assert "Claude" in last_prompt and "GPT-5.4" in last_prompt  # Kimi sees both priors
+    round1_sys = [msgs[0]["content"] for msgs in client.messages[:3]]
+    round2_sys = [msgs[0]["content"] for msgs in client.messages[3:]]
+    for sys_msg in round1_sys:
+        assert "Blind estimates" not in sys_msg          # round 1 is isolated
+    for sys_msg in round2_sys:
+        # every round-2 speaker (not just the last) sees all three blind estimates
+        assert "Claude" in sys_msg and "GPT-5.4" in sys_msg and "Kimi K2" in sys_msg
 
 def test_parse_prob_handles_p_yes_line_and_defers():
     from council.trading.deliberation import _parse_prob
@@ -108,14 +111,20 @@ def test_decide_falls_back_to_mid_without_quote():
     out = decide(_delib(m.id, 0.533, 0.018), m, CAPS)
     assert out.place is True and out.side == "no" and out.limit_price_cents == 38
 
-def test_debate_prompt_has_rules_quote_and_market_prior():
+def test_debate_prompt_has_rules_in_both_rounds_but_quote_only_in_round2():
     client = RoundtableClient({s.model: 0.5 for s in _PANEL})
     m = Market("X", "x?", 0.50, yes_bid=0.48, yes_ask=0.52, rules="Resolves YES if above 60.")
     DeliberativeCouncil(_PANEL, client).debate(m, "some notes")
-    allmsgs = " ".join(msg["content"] for conv in client.messages for msg in conv)
-    assert "above 60" in allmsgs
-    assert "0.48" in allmsgs and "0.52" in allmsgs
-    assert "prior" in allmsgs.lower() and "catalyst" in allmsgs.lower()
+    round1_sys = [msgs[0]["content"] for msgs in client.messages[:3]]
+    round2_sys = [msgs[0]["content"] for msgs in client.messages[3:]]
+    for sys_msg in round1_sys:
+        assert "above 60" in sys_msg
+        assert "0.48" not in sys_msg and "0.52" not in sys_msg     # blind: no quote
+        assert "independent view" in sys_msg.lower()
+    for sys_msg in round2_sys:
+        assert "above 60" in sys_msg
+        assert "0.48" in sys_msg and "0.52" in sys_msg             # revealed
+        assert "do not reflexively defer" in sys_msg.lower()
 
 def test_debate_prompt_includes_lessons():
     client = RoundtableClient({s.model: 0.5 for s in _PANEL})
@@ -123,3 +132,59 @@ def test_debate_prompt_includes_lessons():
     DeliberativeCouncil(_PANEL, client).debate(m, "notes", lessons="LESSONS: your >25c edges 1/8.")
     allmsgs = " ".join(msg["content"] for conv in client.messages for msg in conv)
     assert "your >25c edges 1/8" in allmsgs
+
+
+import statistics
+from council.trading.deliberation import DeliberativeCouncil
+from council.trading.market import Market
+from council.models import ModelSpec
+
+
+class ScriptedClient:
+    """Returns scripted texts in order; records every prompt it saw."""
+    def __init__(self, texts):
+        self.texts = list(texts)
+        self.prompts = []
+
+    def complete(self, spec, messages):
+        self.prompts.append((messages[0]["content"], messages[1]["content"]))
+        return self.texts.pop(0), None
+
+
+def _mkt():
+    return Market("KXQ-1", "Will it rain?", 0.80, volume=500,
+                  yes_bid=0.78, yes_ask=0.82, rules="Resolves YES if NWS reports rain.")
+
+
+def test_round1_is_blind_no_price_no_peers():
+    texts = ["A. P(YES): 0.60", "B. P(YES): 0.70", "C. P(YES): 0.65",
+             "A2. P(YES): 0.62", "B2. P(YES): 0.70", "C2. P(YES): 0.66"]
+    client = ScriptedClient(texts)
+    council = DeliberativeCouncil([ModelSpec("openrouter/anthropic/claude-opus-4.8", "x"),
+                                   ModelSpec("openrouter/moonshotai/kimi-k2.6", "x"),
+                                   ModelSpec("openrouter/openai/gpt-5.4", "x")], client)
+    d = council.debate(_mkt(), "some research")
+    # first 3 calls are round 1: no market price anywhere in the prompt
+    for sys_msg, user_msg in client.prompts[:3]:
+        assert "0.80" not in sys_msg and "0.80" not in user_msg
+        assert "P(YES): 0.6" not in sys_msg          # no peer estimates leaked
+    # last 3 calls are round 2: price and peers revealed
+    for sys_msg, user_msg in client.prompts[3:]:
+        assert "0.80" in sys_msg or "0.80" in user_msg
+    assert len(d.round1) == 3 and len(d.round2) == 3
+
+
+def test_converged_is_extremized_median_of_round2():
+    texts = ["P(YES): 0.60", "P(YES): 0.70", "P(YES): 0.65",
+             "P(YES): 0.10", "P(YES): 0.70", "P(YES): 0.72"]   # 0.10 outlier
+    client = ScriptedClient(texts)
+    council = DeliberativeCouncil([ModelSpec("m/a", "x"), ModelSpec("m/b", "x"),
+                                   ModelSpec("m/c", "x")], client, alpha=1.0)
+    d = council.debate(_mkt(), "notes")
+    assert d.converged_p == 0.70          # median ignores the outlier; alpha=1 = no shift
+
+
+def test_mock_council_populates_round1():
+    from council.trading.deliberation import MockCouncil
+    d = MockCouncil(["A", "B", "C"]).debate(_mkt(), "notes")
+    assert len(d.round1) == 3 and len(d.round2) == 3
