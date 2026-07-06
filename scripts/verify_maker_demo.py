@@ -17,7 +17,13 @@ from council.trading.execution import KalshiTrader
 def main() -> int:
     ticker = sys.argv[1]
     t = KalshiTrader(os.environ["KALSHI_API_KEY_ID"], os.environ["KALSHI_PRIVATE_KEY_PATH"],
-                     host=os.environ.get("KALSHI_HOST"))
+                     host=os.environ.get("KALSHI_HOST", KalshiTrader.DEMO))
+
+    if "demo" not in t.host:
+        print(f"REFUSING: host {t.host} is not a demo host. Set KALSHI_HOST to the demo URL.")
+        return 1
+    print("host:", t.host)
+
     resp = t.place_order(ticker, "yes", 1, 2, tif="gtc")     # 2c deep bid — rests
     oid = resp["order"]["order_id"]
     print("placed resting order:", oid)
