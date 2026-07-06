@@ -206,6 +206,7 @@ class MockCouncil:
 
     def __init__(self, model_names: list[str]) -> None:
         self.specs = list(model_names)   # only len() is read by the floor
+        self.alpha = 1.0
 
     def debate(self, market: Market, notes: str, lessons: str = "") -> Deliberation:
         import random

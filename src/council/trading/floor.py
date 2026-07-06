@@ -126,7 +126,8 @@ class FloorState:
         # Speaking order matters: Kimi K2 (most capable) speaks LAST so it hears the others.
         specs = [ModelSpec(self.books[k]["slug"], "roundtable analyst")
                  for k in self.SPEAK_ORDER if k in self.books]
-        self.council = DeliberativeCouncil(specs, client)
+        self.council = DeliberativeCouncil(
+            specs, client, alpha=float(os.environ.get("EXTREMIZE_ALPHA", 1.3)))
         if self._scout_model:
             self.scout = Scout(client=client, model=self._scout_model,
                                shortlist_n=self._scout_shortlist,
@@ -366,7 +367,7 @@ class FloorState:
                      spread_buffer=self.SPREAD_BUFFER, min_profit=self.MIN_PROFIT)
         self.last_debate = (d, dec)
         if self.live:
-            self.calls += 1 + len(self.council.specs)  # 1 research + 1 turn per model (lean roundtable)
+            self.calls += 1 + 2 * len(self.council.specs)  # 1 research + 2 rounds per model
         self._log(f"Council debate {m.id}: P(YES) {d.converged_p:.2f} vs {m.yes_price:.2f} "
                   f"(spread {d.spread:.3f}) — {dec.reason}")
         if not dec.place:

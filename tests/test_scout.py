@@ -329,10 +329,8 @@ def test_funnel_call_counter_increments_by_one():
     f = _floor_with_scout(_FixedScout(escalate_ids=["MKT-A"]), live=True)
     initial_calls = f.calls
     f._council_eval()
-    # scout call = +1, debate call = +1 + len(specs) = +4; total = +5
-    # But the scout increment is the NEW behavior; debate increment is existing.
-    # We check that the total includes the scout's +1.
-    assert f.calls == initial_calls + 1 + 1 + len(f.council.specs)
+    # scout call = +1, debate call = +1 research + 2 rounds x len(specs); total = +1 + 1 + 2*len(specs)
+    assert f.calls == initial_calls + 1 + 1 + 2 * len(f.council.specs)
 
 
 def test_funnel_backward_compat_scout_disabled(monkeypatch):

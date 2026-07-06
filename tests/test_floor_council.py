@@ -292,3 +292,22 @@ def test_poll_orders_cancels_after_ttl():
     fs._poll_orders()
     assert fs.trader.cancelled and not fs.open_orders
     assert fs.journal._c.execute("SELECT status FROM trades").fetchone()["status"] == "cancelled"
+
+
+def test_enable_live_passes_alpha(monkeypatch):
+    monkeypatch.setenv("EXTREMIZE_ALPHA", "1.7")
+    fs = FloorState()
+    fs._load_live_markets = lambda: []     # no creds needed
+    fs.enable_live(budget=1.0)
+    assert fs.council.alpha == 1.7
+
+
+def test_live_call_accounting_counts_two_rounds():
+    fs = FloorState()
+    fs.live = True
+    fs._live_markets = [_market()]
+    fs.scout.pick = lambda markets, journal: [markets[0]]   # MockScout.pick is random — pin it
+    calls_before = fs.calls
+    fs._council_eval()
+    # 1 scout + 1 research + 2 rounds x 3 models = counted as 1 + (1 + 6)
+    assert fs.calls - calls_before == 1 + 1 + 2 * len(fs.council.specs)
