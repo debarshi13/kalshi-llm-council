@@ -62,12 +62,13 @@ token/cost in the HUD. Run history is in the left rail.
 - All file I/O and command execution are confined to `runs/<id>/workspace/`.
 - Test/shell execution and write-back are **approval-gated** (`COUNCIL_REQUIRE_APPROVAL=true`).
 - Per-run USD budget cap (`COUNCIL_BUDGET_USD`) aborts a runaway loop.
+- **Calibration gate:** live arming is locked until the journal shows the council's Brier score beating the market-price baseline over ≥50 resolved predictions (`CALIBRATION_MIN_N`); `COUNCIL_CALIBRATION_OVERRIDE=true` bypasses it, loudly.
 - A destructive-command denylist + timeouts + output caps back the subprocess sandbox.
   (Docker-backed isolation is the planned hardening step.)
 
 ## Test
 ```bash
-pytest -q          # 24 tests, all green without API keys
+pytest -q          # 180 tests, all green without API keys
 ```
 
 ## Configuration
