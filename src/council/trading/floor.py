@@ -22,7 +22,7 @@ from .deliberation import DeliberativeCouncil, MockCouncil, decide
 from .scout import Scout, MockScout
 from .journal import Journal
 from .execution import KalshiTrader, RiskGuard
-from .ledger import kalshi_fee
+from .ledger import kalshi_fee, maker_fee
 from .market import MockMarketData
 from .research import WebSearchResearch, openrouter_online_search
 from .selection import SelectionParams, edge_score, maker_price_cents
@@ -80,7 +80,8 @@ class FloorState:
         self.COUNCIL_COOLDOWN_SEC = int(os.environ.get("COUNCIL_COOLDOWN_MIN", 30)) * 60
         self._council_seen_ts: dict[str, float] = {}   # market_id -> last-debated epoch
         self.journal = Journal(os.environ.get("JOURNAL_PATH", ":memory:"))
-        self._last_fill = None
+        self.open_orders: list[dict] = []      # resting maker orders awaiting fill/TTL
+        self.ORDER_TTL_TICKS = int(os.environ.get("ORDER_TTL_TICKS", 30))
         self.MARK_EVERY = int(os.environ.get("MARK_EVERY", 20))
         self.RESOLVE_EVERY = int(os.environ.get("RESOLVE_EVERY", 40))
         self._market_data = None
@@ -162,42 +163,90 @@ class FloorState:
                   f"position ${self.guard.max_position_usd:.0f} · total ${self.guard.max_total_exposure_usd:.0f} · "
                   f"daily-loss ${self.guard.max_daily_loss_usd:.0f}.")
 
-    def _auto_execute(self, key, m, side, entry, contracts) -> bool:
-        """Place a real order that actually crosses the spread, and book ONLY what fills.
-        Returns True iff at least one contract filled. Cross: pay the ask to buy YES, hit
-        the bid to buy NO (= sell YES). Falls back to the decided entry if no live quote."""
-        bk = self.books[key]
-        if side == "yes":
-            cross = round((m.yes_ask or entry) * 100)
-        else:  # buy NO == sell YES at the bid
-            cross = 100 - round((m.yes_bid or (1 - entry)) * 100)
-        cross = min(99, max(1, int(cross)))
-        cost = contracts * entry
-        exposure = sum(p["contracts"] * p["entry"] for b in self.books.values() for p in b["open"])
-        # Daily-loss cap must see REAL settled losses (self.output is mock-only), so feed the
-        # journal's realized P&L since midnight.
+    def _place_maker(self, m, d, dec, paper: bool) -> bool:
+        """Post a resting order INSIDE the spread (maker: 75% fee discount, earn the
+        spread). Booked only when a poll sees a real fill. Returns True iff posted."""
+        entry = dec.limit_price_cents / 100.0
+        cost = dec.contracts * entry
+        exposure = sum(p["contracts"] * p["entry"] for b in self.books.values() for p in b["open"]) \
+            + sum(o["contracts"] * o["px"] for o in self.open_orders)
         daily_pnl = self.journal.realized_today() if self.journal else self.output
         ok, reason = self.guard.check(cost, exposure, daily_pnl)
         if not ok:
-            self._log(f"RISK BLOCKED — {bk['name']} {side.upper()} {m.id}: {reason}")
+            self._log(f"RISK BLOCKED — Council {dec.side.upper()} {m.id}: {reason}")
             return False
-        try:
-            resp = self.trader.place_order(m.id, side, contracts, cross)
-        except Exception as exc:  # noqa: BLE001 — never let a broker error crash the loop
-            self._log(f"ORDER FAILED — {bk['name']} {m.id}: {type(exc).__name__}")
-            return False
-        filled = int(float((resp or {}).get("fill_count", 0) or 0))
-        if filled <= 0:
-            self._log(f"NO FILL — {bk['name']} {side.upper()} {m.id} (limit didn't cross)")
-            return False
-        # average_fill_price is in YES terms; book the position in the side's own price
-        yes_px = float((resp or {}).get("average_fill_price", cross / 100.0) or cross / 100.0)
-        fill_px = yes_px if side == "yes" else round(1 - yes_px, 4)
-        bk["open"].append({"tk": m.id, "contracts": filled, "entry": fill_px,
-                           "fee": kalshi_fee(fill_px, filled), "ttl": 9_999})
-        self._last_fill = {"price": fill_px, "count": filled}   # for the journal
-        self._log(f"LIVE ORDER FILLED — {bk['name']} {side.upper()} {filled} {m.id} @ {round(fill_px*100)}¢")
+        if paper:
+            order_id = f"paper-{next(self._ids)}"
+        else:
+            try:
+                resp = self.trader.place_order(m.id, dec.side, dec.contracts,
+                                               dec.limit_price_cents, tif="gtc")
+            except Exception as exc:  # noqa: BLE001 — never let a broker error crash the loop
+                self._log(f"ORDER FAILED — Council {m.id}: {type(exc).__name__}")
+                return False
+            order_id = str(((resp or {}).get("order") or {}).get("order_id") or "")
+            if not order_id:
+                self._log(f"ORDER REJECTED — Council {m.id}: no order_id in response")
+                return False
+        tid = self._journal_log(m, d, dec, side=dec.side, fill_price=0.0,
+                                contracts=dec.contracts, edge=0.0, status="working")
+        self.open_orders.append({"order_id": order_id, "journal_id": tid, "key": "council",
+                                 "tk": m.id, "side": dec.side, "contracts": dec.contracts,
+                                 "px": entry, "tick": self._tick_n, "paper": paper})
+        self._log(f"{'PAPER ' if paper else ''}MAKER POSTED — Council {dec.side.upper()} "
+                  f"{dec.contracts} {m.id} @ {dec.limit_price_cents}¢ (rests, TTL {self.ORDER_TTL_TICKS} ticks)")
         return True
+
+    def _poll_orders(self) -> None:
+        """Each tick: book any filled resting order; cancel any past its TTL."""
+        if not self.open_orders:
+            return
+        md = self._md() if any(o["paper"] for o in self.open_orders) else None
+        for o in self.open_orders[:]:
+            filled, fill_px = 0, o["px"]
+            if o["paper"]:
+                m = None
+                try:
+                    m = md.get_market(o["tk"]) if md else None
+                except Exception:  # noqa: BLE001
+                    pass
+                if m is not None:
+                    # A resting bid fills when the far side crosses down to it.
+                    if o["side"] == "yes" and m.yes_ask and m.yes_ask <= o["px"] + 1e-9:
+                        filled = o["contracts"]
+                    if o["side"] == "no" and m.yes_bid and (1 - m.yes_bid) <= o["px"] + 1e-9:
+                        filled = o["contracts"]
+            else:
+                try:
+                    resp = self.trader.get_order(o["order_id"])
+                except Exception:  # noqa: BLE001 — poll again next tick
+                    continue
+                st = (resp or {}).get("order") or {}
+                filled = int(float(st.get("fill_count") or 0))
+                if filled:
+                    fill_px_yes = float(st.get("average_fill_price") or o["px"])
+                    fill_px = fill_px_yes if o["side"] == "yes" else round(1 - fill_px_yes, 4)
+            if filled > 0:
+                fee = maker_fee(fill_px, filled)
+                self.books[o["key"]]["open"].append(
+                    {"tk": o["tk"], "contracts": filled, "entry": fill_px, "fee": fee,
+                     "ttl": 9_999 if not o["paper"] else random.randint(2, 5)})
+                self.journal.mark_filled(o["journal_id"], fill_px, fee, filled)
+                self._mirror(o["journal_id"])
+                self.trades_today += 1
+                self.open_orders.remove(o)
+                self._log(f"{'PAPER ' if o['paper'] else ''}MAKER FILLED — Council "
+                          f"{o['side'].upper()} {filled} {o['tk']} @ {round(fill_px*100)}¢")
+            elif self._tick_n - o["tick"] >= self.ORDER_TTL_TICKS:
+                if not o["paper"]:
+                    try:
+                        self.trader.cancel_order(o["order_id"])
+                    except Exception:  # noqa: BLE001 — dropping tracking is still safe: journal row cancels
+                        pass
+                self.journal.cancel(o["journal_id"])
+                self.open_orders.remove(o)
+                self._log(f"MAKER EXPIRED — {o['side'].upper()} {o['tk']} unfilled after "
+                          f"{self.ORDER_TTL_TICKS} ticks, cancelled")
 
     def _exit_eval(self) -> None:
         """Each tick: price every open real position off a fresh quote and close it if a
@@ -324,38 +373,30 @@ class FloorState:
             self._journal_log(m, d, dec, side=dec.side or "n/a", fill_price=0.0,
                               contracts=0, edge=0.0, status="skipped")
             return
-        entry = dec.limit_price_cents / 100.0
-        if self.execute and not self.frozen:
-            self._last_fill = None
-            if self._auto_execute("council", m, dec.side, entry, dec.contracts):
-                self.trades_today += 1
-                fill = self._last_fill or {"price": entry, "count": dec.contracts}
-                self._journal_log(m, d, dec, side=dec.side, fill_price=fill["price"],
-                                  contracts=fill["count"],
-                                  edge=abs(d.converged_p - m.yes_price), status="placed")
+        if self.frozen:
+            return
+        if self.execute:
+            self._place_maker(m, d, dec, paper=False)
         elif self.live:
-            self.books["council"]["open"].append(
-                {"tk": m.id, "contracts": dec.contracts, "entry": entry,
-                 "fee": kalshi_fee(entry, dec.contracts), "ttl": random.randint(2, 5)})
-            self._journal_log(m, d, dec, side=dec.side, fill_price=entry,
-                              contracts=dec.contracts,
-                              edge=abs(d.converged_p - m.yes_price), status="placed")
-            self._log(f"PAPER FILL — Council {dec.side.upper()} {dec.contracts} {m.id} @ {dec.limit_price_cents}¢")
+            self._place_maker(m, d, dec, paper=True)
         else:
             self._council_ticket(m, d, dec)
 
-    def _journal_log(self, m, d, dec, *, side, fill_price, contracts, edge, status) -> None:
+    def _journal_log(self, m, d, dec, *, side, fill_price, contracts, edge, status) -> int | None:
         if not self.journal:
-            return
+            return None
+        import statistics as _st
+        blind = round(_st.median([e.p_yes for e in d.round1]), 4) if d.round1 else None
         rationale = " | ".join(f"{t.model} {t.p_yes:.2f}" for t in d.round2)
         tid = self.journal.log(market_id=m.id, title=m.title, side=side, converged_p=d.converged_p,
-                               spread=d.spread, market_price=m.yes_price,
+                               blind_p=blind, spread=d.spread, market_price=m.yes_price,
                                executable_price=dec.limit_price_cents / 100.0, edge=edge,
                                contracts=contracts, fill_price=fill_price,
-                               fee=kalshi_fee(fill_price, contracts) if contracts else 0.0,
+                               fee=kalshi_fee(fill_price, contracts) if contracts and fill_price else 0.0,
                                fill_count=contracts, decision_reason=dec.reason,
                                rationale=rationale, status=status)
         self._mirror(tid)
+        return tid
 
     def _mirror(self, trade_id) -> None:
         if not self.vault_dir:
@@ -384,6 +425,8 @@ class FloorState:
             return
         if self._tick_n % self.DELIBERATE_EVERY == 0:
             self._council_eval()       # one deliberation per interval — mock OR live
+        if self.live or self.execute:
+            self._poll_orders()            # fills/TTL for resting maker orders
         if self.execute:
             self._exit_eval()                  # close positions that hit take-profit / edge-decay
         if self._tick_n % self.MARK_EVERY == 0:
@@ -400,7 +443,7 @@ class FloorState:
 
     def _open_market_ids(self):
         return [r["market_id"] for r in self.journal._c.execute(
-            "SELECT DISTINCT market_id FROM trades WHERE status='placed'").fetchall()]
+            "SELECT DISTINCT market_id FROM trades WHERE status IN ('placed','skipped','working')").fetchall()]
 
     def mark_open(self) -> None:
         md = self._md()

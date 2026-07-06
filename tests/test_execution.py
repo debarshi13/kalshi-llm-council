@@ -44,15 +44,22 @@ def test_risk_guard_limits():
     assert g.check(1, 0, 0)[0] is False         # kill switch
 
 
-# --- floor auto-execution (fake trader: NO real orders) ---------------------
+# --- floor maker execution (fake trader: NO real orders) --------------------
 class _FakeTrader:
     def __init__(self):
         self.placed = []
+        self.cancelled = []
 
-    def place_order(self, ticker, side, count, price, action="buy"):
-        self.placed.append((ticker, side, count, price))
-        yes_px = price / 100.0 if side == "yes" else (100 - price) / 100.0
-        return {"fill_count": str(count), "average_fill_price": f"{yes_px:.4f}"}
+    def place_order(self, ticker, side, count, price, action="buy", tif="ioc"):
+        self.placed.append((ticker, side, count, price, tif))
+        return {"order": {"order_id": f"o{len(self.placed)}"}}
+
+    def get_order(self, order_id):
+        return {"order": {"order_id": order_id, "fill_count": 0}}   # rests unfilled
+
+    def cancel_order(self, order_id):
+        self.cancelled.append(order_id)
+        return {"order": {"order_id": order_id}}
 
 
 class _FakeCouncil:
@@ -93,11 +100,12 @@ def _armed_floor(guard):
     return f
 
 
-def test_auto_execute_places_orders_no_approval():
+def test_maker_orders_post_without_approval():
     f = _armed_floor(RiskGuard(max_position_usd=100, max_total_exposure_usd=1000, max_daily_loss_usd=100))
     for _ in range(f.DELIBERATE_EVERY * 3):
         f.tick()
     assert f.trader.placed, "expected real orders to be placed"
+    assert all(o[4] == "gtc" for o in f.trader.placed)   # resting maker orders, not IOC
     assert f.snapshot()["execute"] is True
     assert f.snapshot()["tickets"] == []        # autonomous — nothing waits for approval
 
