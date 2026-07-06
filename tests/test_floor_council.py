@@ -311,3 +311,28 @@ def test_live_call_accounting_counts_two_rounds():
     fs._council_eval()
     # 1 scout + 1 research + 2 rounds x 3 models = counted as 1 + (1 + 6)
     assert fs.calls - calls_before == 1 + 1 + 2 * len(fs.council.specs)
+
+
+import pytest
+
+
+def test_arm_execution_locked_until_calibrated(monkeypatch):
+    monkeypatch.setenv("COUNCIL_MODE", "live")
+    monkeypatch.setenv("KALSHI_API_KEY_ID", "kid")
+    monkeypatch.setenv("KALSHI_PRIVATE_KEY_PATH", "/tmp/k.pem")
+    monkeypatch.delenv("COUNCIL_CALIBRATION_OVERRIDE", raising=False)
+    fs = FloorState()
+    with pytest.raises(RuntimeError, match="calibration gate"):
+        fs.arm_execution()
+
+
+def test_arm_execution_override(monkeypatch):
+    monkeypatch.setenv("COUNCIL_MODE", "live")
+    monkeypatch.setenv("KALSHI_API_KEY_ID", "kid")
+    monkeypatch.setenv("KALSHI_PRIVATE_KEY_PATH", "/tmp/k.pem")
+    monkeypatch.setenv("COUNCIL_CALIBRATION_OVERRIDE", "true")
+    fs = FloorState()
+    fs.enable_live = lambda: None          # don't build a real client
+    fs.live = True
+    fs.arm_execution()                     # must not raise
+    assert fs.execute

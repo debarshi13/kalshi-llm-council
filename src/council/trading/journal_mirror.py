@@ -27,3 +27,25 @@ def mirror_trade(vault_dir: str, row: dict) -> None:
         (d / f"{mid}.md").write_text(body)
     except Exception:  # noqa: BLE001 — mirroring must never break trading
         pass
+
+
+def mirror_calibration(vault_dir: str, report: dict) -> None:
+    """Overwrite the single calibration page — the honest scoreboard, in the vault."""
+    import datetime
+    from pathlib import Path
+
+    page = Path(vault_dir) / "wiki" / "sources" / "Council Calibration Report.md"
+    page.parent.mkdir(parents=True, exist_ok=True)
+    verdict = ("BEATS the market — live arming unlocked." if report.get("beats_market")
+               else "does NOT beat the market — stay on paper.")
+    page.write_text(
+        f"---\ntype: source\ntitle: \"Council Calibration Report\"\n"
+        f"updated: {datetime.date.today().isoformat()}\ntags:\n  - trading\n  - calibration\n---\n\n"
+        f"# Council Calibration Report\n\n"
+        f"Resolved predictions: **{report['n']}**\n\n"
+        f"| Estimator | Brier (lower = better) |\n|---|---|\n"
+        f"| Council (converged) | {report.get('brier_model')} |\n"
+        f"| Market price baseline | {report.get('brier_market')} |\n"
+        f"| Council (blind round 1) | {report.get('brier_blind')} |\n\n"
+        f"**Verdict:** the council currently {verdict}\n",
+        encoding="utf-8")

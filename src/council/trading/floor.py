@@ -151,6 +151,15 @@ class FloorState:
         kid, pk = os.environ.get("KALSHI_API_KEY_ID"), os.environ.get("KALSHI_PRIVATE_KEY_PATH")
         if not (kid and pk):
             raise RuntimeError("Kalshi credentials missing from .env")
+        min_n = int(os.environ.get("CALIBRATION_MIN_N", 50))
+        rep = self.journal.calibration_report(min_n=min_n) if self.journal else {"beats_market": False, "n": 0}
+        if not rep["beats_market"]:
+            if os.environ.get("COUNCIL_CALIBRATION_OVERRIDE", "").lower() != "true":
+                raise RuntimeError(
+                    f"calibration gate: {rep['n']}/{min_n} resolved predictions, model Brier "
+                    f"{rep.get('brier_model')} vs market {rep.get('brier_market')} — edge not proven. "
+                    f"Keep paper-trading, or set COUNCIL_CALIBRATION_OVERRIDE=true to gamble anyway.")
+            self._log("⚠ CALIBRATION OVERRIDE — arming without proven edge (explicitly requested).")
         if not self.live:
             self.enable_live()
         self.trader = KalshiTrader(kid, pk, host=host or os.environ.get("KALSHI_HOST"))
@@ -473,6 +482,13 @@ class FloorState:
                                 (mid,)).fetchall():
                             self._mirror(r["id"])
             except Exception:  # noqa: BLE001
+                pass
+        if self.vault_dir and self.journal:
+            from .journal_mirror import mirror_calibration
+            try:
+                mirror_calibration(self.vault_dir, self.journal.calibration_report(
+                    min_n=int(os.environ.get("CALIBRATION_MIN_N", 50))))
+            except Exception:  # noqa: BLE001 — vault I/O must never crash the loop
                 pass
 
     def _resolve_mock(self) -> None:
