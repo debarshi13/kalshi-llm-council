@@ -223,7 +223,9 @@ class FakeTrader:
     """Scriptable broker: orders rest, then fill or languish as told."""
     def __init__(self):
         self.placed, self.cancelled = [], []
-        self.fills = {}          # order_id -> fill_count to report
+        self.fills = {}                # order_id -> fill_count to report
+        self.post_cancel_fills = {}    # order_id -> fill_count revealed ONLY after cancel_order() runs
+        self.cancel_should_raise = False
 
     def place_order(self, ticker, side, count, cents, action="buy", tif="ioc"):
         oid = f"o{len(self.placed)}"
@@ -233,10 +235,14 @@ class FakeTrader:
 
     def get_order(self, order_id):
         n = self.fills.get(order_id, 0)
+        if order_id in self.cancelled and order_id in self.post_cancel_fills:
+            n = self.post_cancel_fills[order_id]
         return {"order": {"order_id": order_id, "fill_count": n,
                           "average_fill_price": 0.79 if n else 0.0}}
 
     def cancel_order(self, order_id):
+        if self.cancel_should_raise:
+            raise RuntimeError("cancel boom")
         self.cancelled.append(order_id)
         return {"order": {"order_id": order_id}}
 
@@ -292,6 +298,89 @@ def test_poll_orders_cancels_after_ttl():
     fs._poll_orders()
     assert fs.trader.cancelled and not fs.open_orders
     assert fs.journal._c.execute("SELECT status FROM trades").fetchone()["status"] == "cancelled"
+
+
+def test_poll_orders_partial_fill_cancels_remainder():
+    """Item 1: a partial fill must not leak the untracked remainder resting on Kalshi —
+    book the fill, then cancel the rest."""
+    fs = _floor_with_fake_trader()
+    from council.trading.deliberation import Decision
+    fs._place_maker(_market(), _delib(), Decision(True, "yes", 5, 79, "t"), paper=False)
+    oid = fs.open_orders[0]["order_id"]
+    fs.trader.fills[oid] = 2           # 2 of 5 filled — remainder still resting
+    fs._poll_orders()
+    assert not fs.open_orders          # remainder cancelled -> stop tracking it
+    assert oid in fs.trader.cancelled
+    row = fs.journal._c.execute("SELECT status, fill_count FROM trades").fetchone()
+    assert row["status"] == "placed" and row["fill_count"] == 2
+    assert fs.trades_today == 1
+
+
+def test_poll_orders_partial_fill_cancel_raises_keeps_tracking():
+    """Item 1 variant: if the cancel of the remainder raises, the entry must stay in
+    open_orders (keep polling/TTL-ing) instead of leaking, and must not double-book."""
+    fs = _floor_with_fake_trader()
+    from council.trading.deliberation import Decision
+    fs._place_maker(_market(), _delib(), Decision(True, "yes", 5, 79, "t"), paper=False)
+    oid = fs.open_orders[0]["order_id"]
+    fs.trader.fills[oid] = 2
+    fs.trader.cancel_should_raise = True
+    fs._poll_orders()
+    assert fs.open_orders and fs.open_orders[0]["order_id"] == oid    # kept tracked
+    row = fs.journal._c.execute("SELECT status, fill_count FROM trades").fetchone()
+    assert row["status"] == "placed" and row["fill_count"] == 2
+    assert fs.trades_today == 1
+    # cancel now succeeds: entry drains, and the earlier fill isn't re-booked
+    fs.trader.cancel_should_raise = False
+    fs._poll_orders()
+    assert not fs.open_orders
+    assert fs.trades_today == 1
+    row = fs.journal._c.execute("SELECT fill_count FROM trades").fetchone()
+    assert row["fill_count"] == 2
+
+
+def test_poll_orders_ttl_race_books_late_fill_instead_of_cancelling():
+    """Item 2: at TTL, if a re-poll after the cancel attempt shows a fill (race with the
+    exchange), book it instead of recording a phantom cancel."""
+    fs = _floor_with_fake_trader()
+    fs.ORDER_TTL_TICKS = 3
+    from council.trading.deliberation import Decision
+    fs._place_maker(_market(), _delib(), Decision(True, "yes", 5, 79, "t"), paper=False)
+    oid = fs.open_orders[0]["order_id"]
+    fs.trader.post_cancel_fills[oid] = 5   # revealed only once cancel_order() is called
+    fs._tick_n += 4
+    fs._poll_orders()
+    assert not fs.open_orders
+    assert fs.trades_today == 1
+    row = fs.journal._c.execute("SELECT status, fill_count FROM trades").fetchone()
+    assert row["status"] == "placed" and row["fill_count"] == 5
+
+
+def test_poll_orders_frozen_cancels_resting_real_order():
+    """Item 3: freezing must proactively cancel a resting real order (drains open_orders)
+    even before its TTL — through the same race-safe cancel+re-poll path."""
+    fs = _floor_with_fake_trader()
+    from council.trading.deliberation import Decision
+    fs._place_maker(_market(), _delib(), Decision(True, "yes", 5, 79, "t"), paper=False)
+    oid = fs.open_orders[0]["order_id"]
+    fs.frozen = True
+    fs._poll_orders()
+    assert not fs.open_orders
+    assert oid in fs.trader.cancelled
+    assert fs.journal._c.execute("SELECT status FROM trades").fetchone()["status"] == "cancelled"
+
+
+def test_tick_polls_orders_even_when_frozen():
+    """Item 3: tick() must not abandon live resting orders when frozen/auto-off — polling
+    (and hence the freeze-cancel) must run before the auto/frozen early-return."""
+    fs = _floor_with_fake_trader()
+    from council.trading.deliberation import Decision
+    fs._place_maker(_market(), _delib(), Decision(True, "yes", 5, 79, "t"), paper=False)
+    oid = fs.open_orders[0]["order_id"]
+    fs.frozen = True
+    fs.tick()
+    assert not fs.open_orders
+    assert oid in fs.trader.cancelled
 
 
 def test_enable_live_passes_alpha(monkeypatch):

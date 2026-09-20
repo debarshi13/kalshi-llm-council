@@ -207,14 +207,27 @@ class FloorState:
                   f"{dec.contracts} {m.id} @ {dec.limit_price_cents}¢ (rests, TTL {self.ORDER_TTL_TICKS} ticks)")
         return True
 
+    def _book_fill(self, o: dict, filled: int, fill_px: float) -> None:
+        """Book a resting order's fill: position + journal promotion + daily counter."""
+        fee = maker_fee(fill_px, filled)
+        self.books[o["key"]]["open"].append(
+            {"tk": o["tk"], "contracts": filled, "entry": fill_px, "fee": fee,
+             "ttl": 9_999 if not o["paper"] else random.randint(2, 5)})
+        self.journal.mark_filled(o["journal_id"], fill_px, fee, filled)
+        self._mirror(o["journal_id"])
+        self.trades_today += 1
+        self._log(f"{'PAPER ' if o['paper'] else ''}MAKER FILLED — Council "
+                  f"{o['side'].upper()} {filled} {o['tk']} @ {round(fill_px*100)}¢")
+
     def _poll_orders(self) -> None:
-        """Each tick: book any filled resting order; cancel any past its TTL."""
+        """Each tick: book any filled resting order; cancel any past its TTL. A frozen
+        floor proactively cancels resting REAL orders (race-safe) to shed live risk."""
         if not self.open_orders:
             return
         md = self._md() if any(o["paper"] for o in self.open_orders) else None
         for o in self.open_orders[:]:
-            filled, fill_px = 0, o["px"]
             if o["paper"]:
+                filled = 0
                 m = None
                 try:
                     m = md.get_market(o["tk"]) if md else None
@@ -226,37 +239,74 @@ class FloorState:
                         filled = o["contracts"]
                     if o["side"] == "no" and m.yes_bid and (1 - m.yes_bid) <= o["px"] + 1e-9:
                         filled = o["contracts"]
-            else:
+                if filled > 0:
+                    self._book_fill(o, filled, o["px"])
+                    self.open_orders.remove(o)
+                elif self._tick_n - o["tick"] >= self.ORDER_TTL_TICKS:
+                    self.journal.cancel(o["journal_id"])
+                    self.open_orders.remove(o)
+                    self._log(f"MAKER EXPIRED — {o['side'].upper()} {o['tk']} unfilled after "
+                              f"{self.ORDER_TTL_TICKS} ticks, cancelled")
+                continue
+
+            # ── real order ───────────────────────────────────────────────────
+            if o.get("_pending_cancel"):
+                # Already booked a partial fill; the remainder's cancel raised last
+                # time — retry it (don't re-book, don't leak by giving up tracking).
                 try:
-                    resp = self.trader.get_order(o["order_id"])
-                except Exception:  # noqa: BLE001 — poll again next tick
+                    self.trader.cancel_order(o["order_id"])
+                except Exception:  # noqa: BLE001 — remainder still resting untracked; keep polling
                     continue
-                st = (resp or {}).get("order") or {}
-                filled = int(float(st.get("fill_count") or 0))
-                if filled:
-                    fill_px_yes = float(st.get("average_fill_price") or o["px"])
-                    fill_px = fill_px_yes if o["side"] == "yes" else round(1 - fill_px_yes, 4)
+                self.open_orders.remove(o)
+                continue
+
+            try:
+                resp = self.trader.get_order(o["order_id"])
+            except Exception:  # noqa: BLE001 — poll again next tick
+                continue
+            st = (resp or {}).get("order") or {}
+            filled = int(float(st.get("fill_count") or 0))
             if filled > 0:
-                fee = maker_fee(fill_px, filled)
-                self.books[o["key"]]["open"].append(
-                    {"tk": o["tk"], "contracts": filled, "entry": fill_px, "fee": fee,
-                     "ttl": 9_999 if not o["paper"] else random.randint(2, 5)})
-                self.journal.mark_filled(o["journal_id"], fill_px, fee, filled)
-                self._mirror(o["journal_id"])
-                self.trades_today += 1
+                fill_px_yes = float(st.get("average_fill_price") or o["px"])
+                fill_px = fill_px_yes if o["side"] == "yes" else round(1 - fill_px_yes, 4)
+                self._book_fill(o, filled, fill_px)
+                if filled >= o["contracts"]:
+                    self.open_orders.remove(o)
+                    continue
+                # Partial fill: the remainder is still resting live on Kalshi — cancel it
+                # rather than dropping tracking and leaking it (item 1).
+                try:
+                    self.trader.cancel_order(o["order_id"])
+                except Exception:  # noqa: BLE001 — keep tracking so we keep retrying the cancel
+                    o["_pending_cancel"] = True
+                    continue
                 self.open_orders.remove(o)
-                self._log(f"{'PAPER ' if o['paper'] else ''}MAKER FILLED — Council "
-                          f"{o['side'].upper()} {filled} {o['tk']} @ {round(fill_px*100)}¢")
-            elif self._tick_n - o["tick"] >= self.ORDER_TTL_TICKS:
-                if not o["paper"]:
-                    try:
-                        self.trader.cancel_order(o["order_id"])
-                    except Exception:  # noqa: BLE001 — dropping tracking is still safe: journal row cancels
-                        pass
-                self.journal.cancel(o["journal_id"])
+                continue
+
+            ttl_expired = self._tick_n - o["tick"] >= self.ORDER_TTL_TICKS
+            if ttl_expired or self.frozen:
+                # Cancel, then re-poll ONCE — a fill may have landed since the last poll
+                # (TTL race), or we're proactively de-risking a resting order on freeze.
+                try:
+                    self.trader.cancel_order(o["order_id"])
+                except Exception:  # noqa: BLE001 — still attempt the re-poll below
+                    pass
+                filled2, st2, ok = 0, {}, True
+                try:
+                    resp2 = self.trader.get_order(o["order_id"])
+                    st2 = (resp2 or {}).get("order") or {}
+                    filled2 = int(float(st2.get("fill_count") or 0))
+                except Exception:  # noqa: BLE001 — re-poll itself failed
+                    ok = False
+                if ok and filled2 > 0:
+                    fill_px_yes = float(st2.get("average_fill_price") or o["px"])
+                    fill_px = fill_px_yes if o["side"] == "yes" else round(1 - fill_px_yes, 4)
+                    self._book_fill(o, filled2, fill_px)
+                else:
+                    self.journal.cancel(o["journal_id"])
+                    reason = f"unfilled after {self.ORDER_TTL_TICKS} ticks" if ttl_expired else "frozen"
+                    self._log(f"MAKER EXPIRED — {o['side'].upper()} {o['tk']} {reason}, cancelled")
                 self.open_orders.remove(o)
-                self._log(f"MAKER EXPIRED — {o['side'].upper()} {o['tk']} unfilled after "
-                          f"{self.ORDER_TTL_TICKS} ticks, cancelled")
 
     def _exit_eval(self) -> None:
         """Each tick: price every open real position off a fresh quote and close it if a
@@ -431,12 +481,12 @@ class FloorState:
         self._tick_n += 1
         if not self.execute:
             self._resolve_mock()       # mock + paper positions auto-settle; real ones settle on Kalshi
+        if self.live or self.execute:
+            self._poll_orders()            # fills/TTL for resting maker orders — even if frozen/paused
         if not self.auto or self.frozen:
             return
         if self._tick_n % self.DELIBERATE_EVERY == 0:
             self._council_eval()       # one deliberation per interval — mock OR live
-        if self.live or self.execute:
-            self._poll_orders()            # fills/TTL for resting maker orders
         if self.execute:
             self._exit_eval()                  # close positions that hit take-profit / edge-decay
         if self._tick_n % self.MARK_EVERY == 0:
