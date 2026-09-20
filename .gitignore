@@ -4,6 +4,8 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .env
+.env.*
+!.env.example
 runs/*/
 !runs/.gitkeep
 council.db
@@ -15,3 +17,6 @@ council.db
 *.p8
 .env.txt
 *.secret
+*.p12
+id_rsa*
+kalshi*.txt
