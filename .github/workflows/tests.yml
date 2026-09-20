@@ -1,0 +1,31 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      # No secrets are configured for this workflow, which is the point: the
+      # whole suite runs against MockCouncil / MockScout / MockMarketData.
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      - name: Run tests
+        run: pytest -q

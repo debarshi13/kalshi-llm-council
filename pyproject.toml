@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "council"
 version = "0.1.0"
-description = "A multi-model coding council: Claude, Kimi K2, and GLM-5.2 collaborate on coding tasks under fixed roles, driven from a mission-control dashboard."
+description = "A multi-model council that prices Kalshi event contracts: three LLMs estimate a probability blind, converge, and a fee-aware gate decides whether the edge is worth trading. Paper-first, with real-money execution locked behind a Brier-score calibration gate."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

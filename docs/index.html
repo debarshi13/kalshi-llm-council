@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Floor — a multi-model Kalshi council</title>
+<meta name="description" content="Three LLMs price Kalshi event contracts. A fee-aware gate throws out almost every one. 27 debates, 27 skips.">
+<meta property="og:title" content="The Floor — a trading bot that mostly refuses to trade">
+<meta property="og:description" content="Three LLMs price Kalshi event contracts. A fee-aware gate throws out almost every one.">
+<meta property="og:image" content="assets/social-card.png">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 26 24'><path d='M1 23 L13 1 L25 23 Z' fill='%234FD3E8'/></svg>">
+<style>
+:root{
+  --ground:#0B0D10; --panel:#14181D; --panel-2:#1A1F26;
+  --rule:#242A31; --rule-soft:#1C2128;
+  --ink:#E8EDF2; --ink-2:#98A3B0; --ink-3:#6B7683;
+  --cyan:#4FD3E8; --amber:#E0A23C; --red:#F0554A; --green:#5EE39B;
+  --sans:'IBM Plex Sans',system-ui,-apple-system,sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0;background:var(--ground);color:var(--ink);
+  font-family:var(--sans);font-size:17px;line-height:1.65;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:940px;margin:0 auto;padding:0 20px}
+a{color:var(--cyan)}
+code{font-family:var(--mono);font-size:.88em;background:var(--panel-2);
+  border:1px solid var(--rule-soft);border-radius:4px;padding:2px 6px}
+
+/* ── hero ── */
+header{
+  border-bottom:1px solid var(--rule);
+  background:radial-gradient(760px 320px at 76% -10%,rgba(79,211,232,.10),transparent 62%);
+  padding:26px 0 62px;
+}
+nav{display:flex;align-items:center;gap:13px;margin-bottom:64px}
+nav svg{width:22px;height:20px}
+nav .nm{font-family:var(--mono);font-size:13px;letter-spacing:.2em;
+  text-transform:uppercase;color:var(--ink-2);font-weight:500}
+nav .gh{margin-left:auto;font-family:var(--mono);font-size:13.5px;
+  color:var(--ink-3);text-decoration:none;border:1px solid var(--rule);
+  border-radius:999px;padding:7px 15px;transition:border-color .18s,color .18s}
+nav .gh:hover,nav .gh:focus-visible{color:var(--cyan);border-color:var(--cyan)}
+h1{font-size:clamp(36px,6vw,58px);line-height:1.05;letter-spacing:-.028em;
+  font-weight:600;margin:0;text-wrap:balance}
+h1 .dim{color:var(--ink-3)}
+.lede{font-size:21px;color:var(--ink-2);margin:24px 0 0;max-width:60ch}
+.kpis{display:flex;flex-wrap:wrap;gap:40px;margin-top:46px;
+  padding-top:26px;border-top:1px solid var(--rule)}
+.kpi .v{font-size:30px;font-weight:600;letter-spacing:-.02em;line-height:1;
+  font-variant-numeric:tabular-nums}
+.kpi .l{font-family:var(--mono);font-size:11.5px;letter-spacing:.13em;
+  text-transform:uppercase;color:var(--ink-3);margin-top:10px}
+.kpi.hl .v{color:var(--amber)}
+
+/* ── sections ── */
+section{padding:62px 0;border-bottom:1px solid var(--rule-soft)}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.2em;
+  text-transform:uppercase;color:var(--cyan);margin-bottom:16px}
+h2{font-size:32px;font-weight:600;letter-spacing:-.02em;margin:0 0 18px;
+  text-wrap:balance}
+p{margin:0 0 16px;color:var(--ink-2);max-width:68ch}
+p strong{color:var(--ink);font-weight:600}
+
+/* ── interactive plot ── */
+.figure{margin:32px 0 0;background:var(--panel);border:1px solid var(--rule);
+  border-radius:12px;padding:26px 26px 18px}
+.figtop{display:flex;align-items:baseline;gap:14px;margin-bottom:22px;flex-wrap:wrap}
+.figtop .t{font-family:var(--mono);font-size:12.5px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--ink-2)}
+.figtop .hint{margin-left:auto;font-size:13.5px;color:var(--ink-3)}
+.plot{position:relative;height:300px;border-bottom:1px solid var(--rule)}
+.zone{position:absolute;top:0;bottom:0;left:80%;right:0;
+  background:rgba(94,227,155,.05);border-left:1px dashed var(--amber)}
+.zlab{position:absolute;left:calc(80% + 14px);top:6px;
+  font-family:var(--mono);font-size:11.5px;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--amber);line-height:1.6}
+.dot{position:absolute;width:16px;height:16px;border-radius:50%;
+  background:var(--cyan);margin-left:-8px;box-shadow:0 0 0 2px var(--panel);
+  cursor:pointer;transition:transform .14s ease,background .14s ease}
+.dot:hover,.dot:focus-visible{transform:scale(1.42);background:#fff;outline:none;z-index:5}
+.axis{position:relative;height:30px}
+.tick{position:absolute;top:9px;transform:translateX(-50%);
+  font-family:var(--mono);font-size:13px;color:var(--ink-3);
+  font-variant-numeric:tabular-nums}
+#tip{
+  position:absolute;pointer-events:none;opacity:0;transition:opacity .13s;
+  background:#05070A;border:1px solid var(--rule);border-radius:8px;
+  padding:11px 13px;font-size:13px;line-height:1.55;z-index:10;
+  max-width:290px;box-shadow:0 8px 26px rgba(0,0,0,.6);
+}
+#tip .ti{color:var(--ink);font-weight:500;margin-bottom:6px}
+#tip .tr{font-family:var(--mono);font-size:12px;color:var(--ink-3);
+  display:flex;justify-content:space-between;gap:18px}
+#tip .tr b{color:var(--cyan);font-weight:400}
+table{width:100%;border-collapse:collapse;margin:22px 0;font-size:15.5px}
+th,td{text-align:left;padding:12px 14px 12px 0;border-bottom:1px solid var(--rule-soft)}
+th{font-family:var(--mono);font-size:11.5px;letter-spacing:.13em;
+  text-transform:uppercase;color:var(--ink-3);font-weight:400}
+td{color:var(--ink-2)}
+td:first-child{color:var(--ink)}
+pre{background:var(--panel);border:1px solid var(--rule);border-radius:10px;
+  padding:20px 22px;overflow-x:auto;font-family:var(--mono);font-size:14px;
+  line-height:1.65;color:var(--ink-2);margin:22px 0}
+pre .k{color:#C792EA} pre .f{color:var(--cyan)} pre .s{color:var(--green)}
+pre .c{color:var(--ink-3);font-style:italic} pre .r{color:var(--red)}
+figure{margin:28px 0 0}
+figure img{width:100%;display:block;border:1px solid var(--rule);border-radius:10px}
+figcaption{font-size:14px;color:var(--ink-3);margin-top:12px;line-height:1.55}
+.cta{display:inline-flex;align-items:center;gap:10px;margin-top:8px;
+  font-family:var(--mono);font-size:14.5px;text-decoration:none;color:var(--ground);
+  background:var(--cyan);border-radius:8px;padding:13px 22px;font-weight:500;
+  transition:filter .18s}
+.cta:hover{filter:brightness(1.12)}
+footer{padding:44px 0 70px;font-family:var(--mono);font-size:13px;
+  color:var(--ink-3);letter-spacing:.04em}
+footer a{color:var(--ink-2);text-decoration:none}
+footer a:hover{color:var(--cyan)}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto} *{transition:none!important}
+}
+@media (max-width:620px){
+  .kpis{gap:26px} .plot{height:240px}
+  .zlab{display:none} .figtop .hint{display:none}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <nav>
+      <svg viewBox="0 0 26 24" aria-hidden="true"><path d="M1 23 L13 1 L25 23 Z" fill="#4FD3E8"/></svg>
+      <span class="nm">The Floor</span>
+      <a class="gh" href="https://github.com/debarshi13/kalshi-llm-council">View on GitHub &rarr;</a>
+    </nav>
+    <h1>A trading bot that<br><span class="dim">mostly refuses to trade.</span></h1>
+    <p class="lede">Three language models independently price a Kalshi event contract and argue
+    toward a consensus. Then a fee-aware gate throws out almost every one of them.</p>
+    <div class="kpis">
+      <div class="kpi hl"><div class="v">27 &rarr; 0</div><div class="l">debates &rarr; trades</div></div>
+      <div class="kpi"><div class="v">185</div><div class="l">tests, no keys</div></div>
+      <div class="kpi"><div class="v">~3&cent;</div><div class="l">required edge</div></div>
+      <div class="kpi"><div class="v">27/50</div><div class="l">toward unlocking live</div></div>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <div class="eyebrow">The result</div>
+    <h2>27 debates, 27 skips</h2>
+    <p>Every market the council fully deliberated came back within about a cent of what Kalshi
+    was already charging. <strong>Not one cleared the threshold needed to cover fees.</strong>
+    That is the system working: the gate exists to refuse exactly these trades.</p>
+
+    <div class="figure">
+      <div class="figtop">
+        <span class="t">Measured edge per debate</span>
+        <span class="hint">hover a dot for the market</span>
+      </div>
+      <div class="plot" id="plot">
+        <div class="zone"></div>
+        <div class="zlab">Trade zone<br>0 landed here</div>
+      </div>
+      <div class="axis" id="axis"></div>
+    </div>
+
+    <p style="margin-top:22px"><strong>20 of 27</strong> landed between &minus;0.3&cent;
+    and +0.3&cent;. 1 more was thrown out before pricing, because the three models
+    disagreed too much to call it consensus.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="eyebrow">Why v1 lost money</div>
+    <h2>The gate exists because it had to</h2>
+    <p>An earlier version traded happily and took a real account from <strong>$27.31 to
+    $17.86</strong> over 19 fills. It failed in three ordinary ways, and the rebuild targets
+    each one.</p>
+    <table>
+      <thead><tr><th>&nbsp;</th><th>v1</th><th>Current</th></tr></thead>
+      <tbody>
+        <tr><td>Prompt</td><td>Price given as a strong prior</td><td>Round 1 never sees the price</td></tr>
+        <tr><td>Order type</td><td>Crossed the spread, taker fees</td><td>Rests inside it, maker only</td></tr>
+        <tr><td>Threshold</td><td>Flat edge cutoff</td><td>Fee computed at entry price</td></tr>
+        <tr><td>Result</td><td>19 fills, net loss</td><td>0 trades, 0 fees paid</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="eyebrow">How it decides</div>
+    <h2>Five stages, most ending in no</h2>
+    <figure>
+      <img src="assets/pipeline.png" alt="Pipeline: scout ranks weakly priced markets, three models estimate blind, they converge after seeing the price, a fee-aware gate checks the edge, then the bot rests an order or skips.">
+    </figure>
+    <p style="margin-top:26px">The <strong>blind round</strong> is the load-bearing change.
+    Each model sees the resolution rules and nothing else, so three independent priors go in
+    rather than one prior and two echoes. Only in round two does the price appear, and a model
+    may revise only with a stated reason.</p>
+    <p>The <strong>fee gate</strong> then computes Kalshi's actual maker fee at the exact price
+    it would enter at, adds the spread and a minimum profit, and requires the edge to clear all
+    of it.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="eyebrow">The honesty mechanism</div>
+    <h2>Live execution is locked</h2>
+    <p>Real-money trading raises an error until the council's Brier score beats the market-price
+    baseline across 50 resolved predictions. P&amp;L over a few weeks cannot separate skill from
+    luck; calibration against the price you could have taken instead can.</p>
+<pre><span class="k">def</span> <span class="f">arm_execution</span>(self) -&gt; <span class="k">None</span>:
+    <span class="c">"""Turn on REAL order placement."""</span>
+    rep = self.journal.<span class="f">calibration_report</span>(min_n=min_n)
+
+    <span class="k">if not</span> rep[<span class="s">"beats_market"</span>]:
+        <span class="k r">raise</span> <span class="f">RuntimeError</span>(
+            <span class="s">f"calibration gate: {rep['n']}/{min_n} resolved predictions, "</span>
+            <span class="s">f"model Brier {rep['brier_model']} vs market "</span>
+            <span class="s">f"{rep['brier_market']} — edge not proven."</span>
+        )</pre>
+    <p>The gate was written before the strategy it gates.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="eyebrow">Run it yourself</div>
+    <h2>No API keys required</h2>
+    <p>The whole pipeline runs offline against deterministic mock data, exercising the real
+    control flow: real journal writes, real risk checks, real approval gates.</p>
+<pre>pip install -e <span class="s">".[dev]"</span>
+pytest -q                    <span class="c"># 185 tests, all green</span>
+uvicorn council.api.app:app --port 8777</pre>
+    <figure>
+      <img src="assets/screenshot.png" alt="The Floor dashboard: a council debate on CPI-NOV-HOT with Claude at 39 percent, GPT-5.4 at 39 percent and Kimi K2 at 36 percent, ending in SKIP.">
+      <figcaption>The offline demo. Three estimates, one verdict, and a live log of every
+      decision the floor makes.</figcaption>
+    </figure>
+    <p style="margin-top:30px">
+      <a class="cta" href="https://github.com/debarshi13/kalshi-llm-council">Read the code on GitHub</a>
+    </p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    Debarshi Chatterjee ·
+    <a href="https://github.com/debarshi13">github.com/debarshi13</a> ·
+    <a href="https://linkedin.com/in/debarshi-chatterjee">LinkedIn</a><br>
+    <span style="color:var(--ink-3)">Paper mode. No proven edge. MIT licensed.</span>
+  </div>
+</footer>
+
+<div id="tip" role="tooltip"></div>
+
+<script>
+const PTS = [{"e":0.8,"t":"Fed cuts rates in December?","s":"FED","mp":0.62,"cp":0.6123,"sp":0.028},{"e":1.0,"t":"Los Angeles D vs Minnesota Winner?","s":"KXMLBGAME","mp":0.6,"cp":0.58,"sp":0.0082},{"e":0.3,"t":"Chicago C vs New York M Winner?","s":"KXMLBGAME","mp":0.52,"cp":0.5233,"sp":0.0047},{"e":0.0,"t":"Arizona vs St. Louis Winner?","s":"KXMLBGAME","mp":0.57,"cp":0.56,"sp":0.0082},{"e":-0.3,"t":"Boston vs Colorado Winner?","s":"KXMLBGAME","mp":0.47,"cp":0.4667,"sp":0.0047},{"e":0.3,"t":"Philadelphia vs Washington Winner?","s":"KXMLBGAME","mp":0.57,"cp":0.5567,"sp":0.0125},{"e":0.3,"t":"Los Angeles D wins by over 1.5 runs?","s":"KXMLBSPREAD","mp":0.46,"cp":0.4567,"sp":0.0047},{"e":0.0,"t":"Chicago C wins by over 1.5 runs?","s":"KXMLBSPREAD","mp":0.41,"cp":0.41,"sp":0.0},{"e":0.0,"t":"Milwaukee vs Cincinnati Winner?","s":"KXMLBGAME","mp":0.61,"cp":0.6,"sp":0.0},{"e":-0.3,"t":"Los Angeles D vs Minnesota Total Runs?","s":"KXMLBTOTAL","mp":0.46,"cp":0.4633,"sp":0.0047},{"e":-0.3,"t":"Houston vs Toronto Winner?","s":"KXMLBGAME","mp":0.47,"cp":0.4667,"sp":0.0047},{"e":0.0,"t":"Houston vs Toronto Winner?","s":"KXMLBGAME","mp":0.54,"cp":0.54,"sp":0.0},{"e":0.3,"t":"Cleveland vs Chicago WS Winner?","s":"KXMLBGAME","mp":0.48,"cp":0.4767,"sp":0.0047},{"e":0.3,"t":"Atlanta vs San Diego Winner?","s":"KXMLBGAME","mp":0.52,"cp":0.5233,"sp":0.0047},{"e":0.3,"t":"Philadelphia vs Washington Winner?","s":"KXMLBGAME","mp":0.46,"cp":0.4633,"sp":0.0047},{"e":0.3,"t":"Los Angeles D vs Minnesota Winner?","s":"KXMLBGAME","mp":0.42,"cp":0.4233,"sp":0.0047},{"e":-0.3,"t":"Boston vs Colorado Total Runs?","s":"KXMLBTOTAL","mp":0.89,"cp":0.8867,"sp":0.0047},{"e":-0.3,"t":"Baltimore vs Los Angeles A Winner?","s":"KXMLBGAME","mp":0.41,"cp":0.4067,"sp":0.0047},{"e":2.0,"t":"November CPI above 3.2%?","s":"CPI","mp":0.41,"cp":0.39,"sp":0.0163},{"e":2.3,"t":"US govt shutdown before year end?","s":"GOVT","mp":0.18,"cp":0.2033,"sp":0.0125},{"e":1.3,"t":"US govt shutdown before year end?","s":"GOVT","mp":0.18,"cp":0.1933,"sp":0.0047},{"e":2.3,"t":"Fed cuts rates in December?","s":"FED","mp":0.62,"cp":0.5967,"sp":0.017},{"e":0.3,"t":"US govt shutdown before year end?","s":"GOVT","mp":0.18,"cp":0.1833,"sp":0.0047},{"e":-0.3,"t":"Bitcoin price on Jun 26, 2026?","s":"KXBTCD","mp":0.83,"cp":0.8733,"sp":0.0094},{"e":0.3,"t":"Bitcoin price on Jun 26, 2026?","s":"KXBTCD","mp":0.06,"cp":0.0567,"sp":0.0047},{"e":-0.3,"t":"Bitcoin price on Jun 26, 2026?","s":"KXBTCD","mp":0.05,"cp":0.0467,"sp":0.0047}];
+const X_MIN = -1, X_MAX = 4, DOT = 16, GAP = 4;
+const pct = v => (v - X_MIN) / (X_MAX - X_MIN) * 100;
+const plot = document.getElementById('plot');
+const tip = document.getElementById('tip');
+const cents = v => (v >= 0 ? '+' : '') + v.toFixed(1) + '\u00a2';
+
+// stack dots sharing an edge value so none overlap
+const stack = new Map();
+PTS.slice().sort((a, b) => a.e - b.e).forEach(p => {
+  const i = stack.get(p.e) || 0;
+  stack.set(p.e, i + 1);
+  const d = document.createElement('button');
+  d.className = 'dot';
+  d.style.left = pct(p.e) + '%';
+  d.style.bottom = (i * (DOT + GAP)) + 'px';
+  d.setAttribute('aria-label',
+    `${p.t} — edge ${cents(p.e)}, skipped`);
+  const show = () => {
+    tip.innerHTML =
+      `<div class="ti">${p.t}</div>` +
+      `<div class="tr"><span>measured edge</span><b>${cents(p.e)}</b></div>` +
+      (p.mp != null ? `<div class="tr"><span>market price</span><b>${Math.round(p.mp*100)}\u00a2</b></div>` : '') +
+      (p.cp != null ? `<div class="tr"><span>council P(YES)</span><b>${Math.round(p.cp*100)}%</b></div>` : '') +
+      `<div class="tr"><span>decision</span><b>SKIP</b></div>`;
+    const r = d.getBoundingClientRect();
+    tip.style.opacity = '1';
+    const tw = tip.offsetWidth;
+    let x = r.left + window.scrollX + r.width / 2 - tw / 2;
+    x = Math.max(12, Math.min(x, document.documentElement.clientWidth - tw - 12));
+    tip.style.left = x + 'px';
+    tip.style.top = (r.top + window.scrollY - tip.offsetHeight - 12) + 'px';
+  };
+  const hide = () => { tip.style.opacity = '0'; };
+  d.addEventListener('mouseenter', show);
+  d.addEventListener('focus', show);
+  d.addEventListener('mouseleave', hide);
+  d.addEventListener('blur', hide);
+  plot.appendChild(d);
+});
+
+const axis = document.getElementById('axis');
+for (let v = X_MIN; v <= X_MAX; v++) {
+  const t = document.createElement('span');
+  t.className = 'tick';
+  t.style.left = pct(v) + '%';
+  t.textContent = (v > 0 ? '+' : '') + v + '\u00a2';
+  axis.appendChild(t);
+}
+</script>
+</body>
+</html>
